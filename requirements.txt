@@ -1,0 +1,15 @@
+mujoco>=3.0
+gymnasium>=1.0
+stable-baselines3[extra]>=2.0
+opencv-python>=4.8
+mediapy>=1.1
+torch>=2.0
+wandb>=0.15
+tensorboard>=2.13
+matplotlib>=3.7
+imageio>=2.31
+numpy>=1.24
+scipy>=1.10
+pyyaml>=6.0
+tqdm>=4.65
+pytest>=7.0

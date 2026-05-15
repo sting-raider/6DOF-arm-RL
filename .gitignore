@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+
+# MuJoCo
+*.mjb
+*.mjmodel
+
+# Logs
+logs/
+wandb/
+runs/
+*.log
+
+# Models
+models/*.zip
+models/*.pth
+models/*.pt
+
+# Videos
+videos/*.mp4
+videos/*.avi
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
