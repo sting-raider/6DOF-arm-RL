@@ -1,40 +1,57 @@
 """
-Pick-and-Place Gymnasium Environment.
+Pick-and-Place Gymnasium Environment — v2 (Fixed Rewards).
 
 Curriculum phases:
-  Phase 0: REACH  - Only reward for getting EE close to object
-  Phase 1: GRASP  - Reward for reaching + grasping + lifting
-  Phase 2: PLACE  - Full task: reach, grasp, place in basket
+  Phase 0: REACH  - Move end-effector to object
+  Phase 1: GRASP  - Reach + grasp + lift
+  Phase 2: PLACE  - Full pick-and-place into basket
 
-Observation: [ee_pos (3), object_pos (3), gripper_state (1), is_grasping (1)] = 8D
-Action: [delta_joint_0..4, gripper] = 6D (continuous)
+Observation (20D):
+  ee_pos (3) + obj_pos (3) + relative_pos (3) + joint_pos (5) +
+  joint_vel (5) + gripper_state (1)
+
+Action (6D):
+  delta_joint_0..4 (5) + gripper_action (1)
+
+Key changes from v1:
+  - Positive potential-based reward shaping (not flat negative)
+  - prev_dist tracking for temporal shaping signal
+  - Richer observations (relative pos, joint state)
+  - Per-phase episode length limits
+  - Reward component logging for diagnostics
 """
 
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 from robots.kuka_iiwa import KukaRobot
 from sensors.camera import OverheadCamera
 from utils.constants import (
-    NUM_JOINTS, DELTA_MAX, MAX_EPISODE_STEPS,
-    REWARD_REACH_SUCCESS, REWARD_GRASP_BONUS, REWARD_PLACE_SUCCESS,
-    REWARD_DISTANCE_SCALE, REWARD_PER_STEP,
+    DELTA_MAX,
     OBJECT_SPAWN_X_MIN, OBJECT_SPAWN_X_MAX,
     OBJECT_SPAWN_Y_MIN, OBJECT_SPAWN_Y_MAX,
     TABLE_HEIGHT, BASKET_POS,
 )
 
+# Per-phase episode lengths (steps)
+PHASE_MAX_STEPS = {0: 200, 1: 300, 2: 400}
+
+# Workspace radius for reward normalization (meters)
+MAX_WORKSPACE_DIST = 1.0
+
 
 class PickAndPlaceEnv(gym.Env):
     """
-    6-DOF arm pick-and-place environment with curriculum learning.
+    6-DOF arm pick-and-place environment with curriculum learning
+    and positive potential-based reward shaping.
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
 
-    def __init__(self, xml_path: str, curriculum_phase: int = 0, use_vision: bool = False):
+    def __init__(self, xml_path: str, curriculum_phase: int = 0,
+                 use_vision: bool = False, render_mode: str = "rgb_array"):
         """
         Initialize the environment.
 
@@ -42,23 +59,22 @@ class PickAndPlaceEnv(gym.Env):
             xml_path: Path to MuJoCo XML scene file.
             curriculum_phase: 0=REACH, 1=GRASP, 2=PLACE.
             use_vision: If True, include camera image in observation.
+            render_mode: "rgb_array" or "human".
         """
         super().__init__()
 
         self.curriculum_phase = curriculum_phase
         self.use_vision = use_vision
+        self.render_mode = render_mode
 
         # Initialize robot and camera
         self.robot = KukaRobot(xml_path)
         self.camera = OverheadCamera(self.robot) if use_vision else None
 
-        # Observation space
-        # EE pos (3) + object pos (3) + gripper (1) + grasping flag (1) = 8D
-        obs_dim = 8
-        if use_vision:
-            # Will add image observation separately if needed
-            pass
-
+        # Observation space (20D):
+        #   ee_pos (3) + obj_pos (3) + relative_pos (3) +
+        #   joint_pos (5) + joint_vel (5) + gripper_state (1)
+        obs_dim = 20
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
@@ -68,11 +84,18 @@ class PickAndPlaceEnv(gym.Env):
             low=-1.0, high=1.0, shape=(6,), dtype=np.float32
         )
 
+        # Episode state
         self._episode_step = 0
+        self._max_episode_steps = PHASE_MAX_STEPS.get(curriculum_phase, 200)
         self._reach_success = False
         self._grasp_success = False
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> tuple:
+        # For potential-based reward shaping
+        self._prev_dist = 0.0
+        self._prev_dist_to_basket = 0.0
+
+    def reset(self, seed: Optional[int] = None,
+              options: Optional[Dict] = None) -> tuple:
         """
         Reset the environment.
 
@@ -92,8 +115,15 @@ class PickAndPlaceEnv(gym.Env):
         self._reach_success = False
         self._grasp_success = False
 
+        # Initialize shaping distances
+        ee_pos = self.robot.get_ee_pos()
+        self._prev_dist = float(np.linalg.norm(ee_pos - obj_pos))
+        self._prev_dist_to_basket = float(np.linalg.norm(
+            obj_pos - BASKET_POS
+        ))
+
         obs = self._get_observation()
-        info = {}
+        info = {"reset": True}
         return obs, info
 
     def step(self, action: np.ndarray) -> tuple:
@@ -110,95 +140,131 @@ class PickAndPlaceEnv(gym.Env):
         self.robot.apply_action(action)
         self._episode_step += 1
 
-        reward = self._compute_reward()
+        reward, reward_info = self._compute_reward()
         obs = self._get_observation()
 
         terminated = self._check_terminated()
-        truncated = self._episode_step >= MAX_EPISODE_STEPS
+        truncated = self._episode_step >= self._max_episode_steps
 
         info = {
             "reach_success": self._reach_success,
             "grasp_success": self._grasp_success,
             "place_success": self.robot.is_object_in_basket(),
             "episode_step": self._episode_step,
+            **reward_info,
         }
 
         return obs, reward, terminated, truncated, info
 
     def _get_observation(self) -> np.ndarray:
         """
-        Build observation vector.
+        Build observation vector (20D).
 
         Returns:
-            Observation array (8,): ee_pos (3), obj_pos (3), gripper (1), grasping (1)
+            [ee_pos(3), obj_pos(3), relative_pos(3),
+             joint_pos(5), joint_vel(5), gripper_state(1)]
         """
         ee_pos = self.robot.get_ee_pos()
         obj_pos = self.robot.get_object_pos()
-        gripper = np.array([self.robot.get_gripper_state()])
-        grasping = np.array([1.0 if self.robot.is_object_grasped() else 0.0])
+        relative_pos = obj_pos - ee_pos  # vector from EE to object
 
-        obs = np.concatenate([ee_pos, obj_pos, gripper, grasping])
+        # Joint state (first 5 actuated joints)
+        joint_pos = self.robot.get_joint_positions()[:5]
+        joint_vel = self.robot.get_joint_velocities()[:5]
+
+        gripper = np.array([self.robot.get_gripper_state()])
+
+        obs = np.concatenate([
+            ee_pos,         # 3
+            obj_pos,        # 3
+            relative_pos,   # 3
+            joint_pos,      # 5
+            joint_vel,      # 5
+            gripper,        # 1
+        ])  # total = 20
         return obs.astype(np.float32)
 
-    def _compute_reward(self) -> float:
+    def _compute_reward(self) -> tuple:
         """
-        Compute reward based on current curriculum phase.
+        Compute reward with positive potential-based shaping.
 
-        Phase 0 (REACH): Reward for minimizing EE-object distance
-        Phase 1 (GRASP): REACH + bonus for grasping
-        Phase 2 (PLACE): Full reward: reach + grasp + lift + place
+        Returns:
+            (reward_float, reward_info_dict)
         """
         ee_pos = self.robot.get_ee_pos()
         obj_pos = self.robot.get_object_pos()
         dist = float(np.linalg.norm(ee_pos - obj_pos))
 
-        # Base distance reward (always active)
-        reward = REWARD_DISTANCE_SCALE * dist
+        # === Positive baseline: higher = closer to object ===
+        # Maps [0, MAX_WORKSPACE_DIST] → [1.0, 0.0]
+        baseline = max(0.0, 1.0 - dist / MAX_WORKSPACE_DIST)
 
-        # Per-step penalty to encourage efficiency
-        reward += REWARD_PER_STEP
+        # === Temporal shaping: reward for getting closer ===
+        shaping = 10.0 * (self._prev_dist - dist)
+        self._prev_dist = dist
 
-        # Phase 0: REACH
-        if self.curriculum_phase == 0:
-            if dist < 0.05:
-                reward += REWARD_REACH_SUCCESS
-                self._reach_success = True
+        reward = baseline + shaping
 
-        # Phase 1: GRASP
-        elif self.curriculum_phase == 1:
-            if dist < 0.05:
-                reward += REWARD_REACH_SUCCESS
-                self._reach_success = True
+        # Track reward components for logging
+        reward_info = {
+            "r_baseline": baseline,
+            "r_shaping": shaping,
+            "r_reach_bonus": 0.0,
+            "r_grasp_bonus": 0.0,
+            "r_lift_bonus": 0.0,
+            "r_place_shaping": 0.0,
+            "r_place_bonus": 0.0,
+            "dist_to_obj": dist,
+        }
 
+        # === Phase 0: REACH ===
+        if dist < 0.05:
+            reward += 5.0
+            reward_info["r_reach_bonus"] = 5.0
+            self._reach_success = True
+
+        # === Phase 1+: GRASP ===
+        if self.curriculum_phase >= 1:
             if self.robot.is_object_grasped():
-                reward += REWARD_GRASP_BONUS
-                self._grasp_success = True
-                # Bonus for lifting object above table
-                if obj_pos[2] > TABLE_HEIGHT + 0.05:
-                    reward += 2.0
-
-        # Phase 2: PLACE
-        elif self.curriculum_phase == 2:
-            if dist < 0.05:
-                reward += REWARD_REACH_SUCCESS
-                self._reach_success = True
-
-            if self.robot.is_object_grasped():
-                reward += REWARD_GRASP_BONUS
+                reward += 5.0
+                reward_info["r_grasp_bonus"] = 5.0
                 self._grasp_success = True
 
+                # Lift bonus: reward for getting object above table
+                lift_height = obj_pos[2] - (TABLE_HEIGHT + 0.02)
+                if lift_height > 0.02:
+                    lift_bonus = min(lift_height * 20.0, 3.0)  # up to 3.0
+                    reward += lift_bonus
+                    reward_info["r_lift_bonus"] = lift_bonus
+
+        # === Phase 2: PLACE ===
+        if self.curriculum_phase >= 2 and self.robot.is_object_grasped():
+            dist_to_basket = float(np.linalg.norm(obj_pos - BASKET_POS))
+
+            # Shaping toward basket
+            basket_shaping = 5.0 * (self._prev_dist_to_basket - dist_to_basket)
+            self._prev_dist_to_basket = dist_to_basket
+            reward += basket_shaping
+            reward_info["r_place_shaping"] = basket_shaping
+            reward_info["dist_to_basket"] = dist_to_basket
+
+            # Big bonus for successful placement
             if self.robot.is_object_in_basket():
-                reward += REWARD_PLACE_SUCCESS
+                reward += 50.0
+                reward_info["r_place_bonus"] = 50.0
 
-        return reward
+        # Small action efficiency penalty (encourages shorter paths)
+        reward -= 0.005
+
+        return reward, reward_info
 
     def _check_terminated(self) -> bool:
         """
         Check if episode should terminate early.
 
         Terminates if:
-        - Object placed in basket (phase 2)
-        - Object falls off table
+        - Object placed in basket (phase 2) — success
+        - Object falls off table — failure
         """
         if self.curriculum_phase == 2 and self.robot.is_object_in_basket():
             return True
@@ -209,12 +275,15 @@ class PickAndPlaceEnv(gym.Env):
 
         return False
 
-    def render(self, mode: str = "rgb_array") -> Optional[np.ndarray]:
+    def render(self) -> Optional[np.ndarray]:
         """Render the current frame."""
-        if mode == "rgb_array":
-            return self.camera.capture_rgb() if self.camera else self.robot.render_image()
+        if self.render_mode == "rgb_array":
+            if self.camera is not None:
+                return self.camera.capture_rgb()
+            return self.robot.render_image()
         return None
 
     def close(self):
-        """Clean up resources."""
-        pass
+        """Clean up MuJoCo resources."""
+        if hasattr(self, 'robot') and self.robot is not None:
+            self.robot.close()

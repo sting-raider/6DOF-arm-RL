@@ -9,21 +9,33 @@ venv/
 # MuJoCo
 *.mjb
 *.mjmodel
+MUJOCO_LOG.TXT
 
 # Logs
 logs/
+logs_old_v1/
 wandb/
 runs/
 *.log
 
-# Models
-models/*.zip
-models/*.pth
-models/*.pt
+# Models (binaries — too large for git)
+models/
+models_old_v1/
 
-# Videos
-videos/*.mp4
-videos/*.avi
+# Videos & screenshots
+videos/
+screenshots/
+
+# Isaac Lab / Isaac Gym — large external repos, not our code
+IsaacLab/
+IsaacGymEnvs/
+isaaclab-venv/
+isaacsim-venv-3.11/
+
+# Old reports
+FINAL_STATUS.md
+REPORT.md
+ISAAC_SIM_SETUP.md
 
 # IDE
 .vscode/

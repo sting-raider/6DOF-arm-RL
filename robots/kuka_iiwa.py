@@ -72,6 +72,10 @@ class KukaRobot:
         self._timestep = TIMESTEP
         self._n_substeps = SUBSTEPS
 
+        # Cached renderer for efficient rendering
+        self._renderer = None
+        self._renderer_size = (0, 0)
+
         # Initial reset to settle
         self.reset()
 
@@ -259,6 +263,23 @@ class KukaRobot:
         """Return end-effector world position, shape (3,)."""
         return self.data.xpos[self._ee_body_id].copy()
 
+    def set_object_position(self, pos: np.ndarray) -> None:
+        """
+        Set the object position directly.
+
+        Args:
+            pos: 3D position [x, y, z]
+        """
+        obj_qpos_adr = self._object_qpos_adr
+        self.data.qpos[obj_qpos_adr + 0] = pos[0]
+        self.data.qpos[obj_qpos_adr + 1] = pos[1]
+        self.data.qpos[obj_qpos_adr + 2] = pos[2]
+        # Keep quaternion identity
+        self.data.qpos[obj_qpos_adr + 3] = 1.0
+        self.data.qpos[obj_qpos_adr + 4] = 0.0
+        self.data.qpos[obj_qpos_adr + 5] = 0.0
+        self.data.qpos[obj_qpos_adr + 6] = 0.0
+
     def get_object_pos(self) -> np.ndarray:
         """Return object world position, shape (3,)."""
         return self.data.xpos[self._object_body_id].copy()
@@ -310,8 +331,16 @@ class KukaRobot:
         Returns:
             RGB image as numpy array (H, W, 3), uint8.
         """
-        renderer = mujoco.Renderer(self.model, height=height, width=width)
-        renderer.update_scene(self.data, camera="overhead")
-        rgb = renderer.render()
-        renderer.close()
-        return rgb
+        if self._renderer is None or self._renderer_size != (width, height):
+            if self._renderer is not None:
+                self._renderer.close()
+            self._renderer = mujoco.Renderer(self.model, height=height, width=width)
+            self._renderer_size = (width, height)
+        self._renderer.update_scene(self.data, camera="overhead")
+        return self._renderer.render().copy()
+
+    def close(self):
+        """Clean up renderer resources."""
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None

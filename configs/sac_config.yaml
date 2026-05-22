@@ -1,75 +1,49 @@
-# SAC Training Configuration
+# SAC Training Configuration — v2 (Fixed)
 # Phase-based curriculum learning for 6-DOF arm pick-and-place
+#
+# Key changes from v1:
+#   - Increased buffer_size to 500K (was 100K)
+#   - Reduced batch_size to 256 (was 1024 in script)
+#   - Per-phase max_steps now in environment code
+#   - Increased training timesteps significantly
 
 phases:
   reach:
     phase_id: 0
     name: "REACH"
-    total_timesteps: 500_000
+    total_timesteps: 2_000_000
     description: "Learn to move end-effector toward object"
-    reward_weights:
-      distance: -1.0
-      reach_success: 10.0
-      grasp_bonus: 0.0
-      place_success: 0.0
-      per_step: -0.01
-    termination:
-      max_steps: 100
-      fall_off_table: true
 
   grasp:
     phase_id: 1
     name: "GRASP"
-    total_timesteps: 750_000
+    total_timesteps: 2_000_000
     description: "Learn to reach, grasp, and lift object"
-    reward_weights:
-      distance: -1.0
-      reach_success: 10.0
-      grasp_bonus: 5.0
-      place_success: 0.0
-      per_step: -0.01
-    termination:
-      max_steps: 150
-      fall_off_table: true
 
   place:
     phase_id: 2
     name: "PLACE"
-    total_timesteps: 1_000_000
+    total_timesteps: 3_000_000
     description: "Learn full pick-and-place into basket"
-    reward_weights:
-      distance: -1.0
-      reach_success: 10.0
-      grasp_bonus: 5.0
-      place_success: 50.0
-      per_step: -0.01
-    termination:
-      max_steps: 200
-      fall_off_table: true
 
 sac_hyperparameters:
   policy: "MlpPolicy"
   learning_rate: 0.0003
-  buffer_size: 100000
-  learning_starts: 10000
-  batch_size: 256
+  buffer_size: 1_000_000
+  learning_starts: 10_000
+  batch_size: 1024
   tau: 0.005
   gamma: 0.99
-  train_freq: 1
-  gradient_steps: 1
   net_arch: [256, 256]
   activation_fn: "relu"
 
 environment:
   xml_path: "scenes/pick_and_place_scene.xml"
-  image_width: 64
-  image_height: 64
-  use_vision: false  # Set true for image-based observations
+  n_parallel_envs: 16
+  use_vision: false
 
 logging:
   log_dir: "logs"
   model_dir: "models"
   video_dir: "videos"
-  wandb_project: "ic-6dof-arm"
-  wandb_entity: null
   tensorboard: true
