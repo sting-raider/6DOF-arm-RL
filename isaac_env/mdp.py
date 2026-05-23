@@ -91,11 +91,8 @@ def object_position(
     env: ManagerBasedRLEnv,
     object_name: str = "object",
 ) -> torch.Tensor:
-    """Object centroid position (3D) in world frame, relative to env origin."""
-    # Use body_pos_w for consistent per-env indexing (matches Articulation convention)
+    """Object centroid position (3D) relative to env origin. Uses root_pos_w."""
     obj = env.scene[object_name]
-    if obj.data.body_pos_w is not None:
-        return obj.data.body_pos_w[:, 0, :] - env.scene.env_origins
     return obj.data.root_pos_w - env.scene.env_origins
 
 
