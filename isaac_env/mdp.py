@@ -91,9 +91,9 @@ def object_position(
     env: ManagerBasedRLEnv,
     object_name: str = "object",
 ) -> torch.Tensor:
-    """Object centroid position (3D) relative to env origin. Uses root_pos_w."""
+    """Object centroid position (3D). root_pos_w is already local (relative to env origin)."""
     obj = env.scene[object_name]
-    return obj.data.root_pos_w - env.scene.env_origins
+    return obj.data.root_pos_w  # already local — no env_origins subtraction needed
 
 
 def gripper_state(
