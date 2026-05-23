@@ -218,32 +218,42 @@ class KukaRobot:
 
     def _update_grasp(self) -> None:
         """
-        Check proximity and update the magnetic weld.
-        If gripper is closed and EE is near object -> grasp
-        If gripper is open -> release
+        Check proximity and update the magnetic weld constraint.
+
+        Grasp activates when:
+          - gripper action is closed (> 0)
+          - EE is within GRASP_DISTANCE_THRESHOLD of object
+
+        Grasp is maintained while:
+          - gripper remains closed
+          - EE stays within WELD_BREAK_DISTANCE of object
+
+        Grasp releases when gripper opens OR object moves too far from EE.
         """
         if self._weld_eq_id < 0:
             return
 
-        # Check gripper state
         gripper_closed = self._gripper_action > 0.0
-        gripper_open = self._gripper_action < 0.0
 
         ee_pos = self.get_ee_pos()
         obj_pos = self.get_object_pos()
         dist = float(np.linalg.norm(ee_pos - obj_pos))
 
-        if gripper_closed and dist < GRASP_DISTANCE_THRESHOLD:
-            # Activate weld (grasp)
-            if not self._is_grasping:
-                self._is_grasping = True
-                self._object_grasped = True
-                self.data.eq_active[self._weld_eq_id] = 1
-        elif gripper_open:
-            # Deactivate weld (release)
-            if self._is_grasping:
+        currently_grasped = bool(self.data.eq_active[self._weld_eq_id])
+
+        if currently_grasped:
+            # Release if gripper opens OR object drifts too far from EE
+            if not gripper_closed or dist > WELD_BREAK_DISTANCE:
                 self._is_grasping = False
                 self.data.eq_active[self._weld_eq_id] = 0
+        else:
+            # Activate if gripper closed and close enough to object
+            if gripper_closed and dist < GRASP_DISTANCE_THRESHOLD:
+                self._is_grasping = True
+                self.data.eq_active[self._weld_eq_id] = 1
+
+        # Always sync _object_grasped with live weld state
+        self._object_grasped = bool(self.data.eq_active[self._weld_eq_id])
 
     def get_joint_positions(self) -> np.ndarray:
         """Return current joint angles (radians), shape (6,)."""
