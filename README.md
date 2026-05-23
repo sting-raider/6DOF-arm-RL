@@ -1,131 +1,137 @@
 # 6-DOF Arm Pick-and-Place via Reinforcement Learning
 
-> A MuJoCo + Stable-Baselines3 pipeline that trains a Kuka iiwa robot to reach, grasp, and place objects using curriculum-based SAC — from scratch to basket placements in under 2 hours of GPU time.
+> An Isaac Lab + rsl_rl pipeline that trains a UR10e robot to reach, grasp, and place objects using curriculum-based SAC — from scratch to basket placements at GPU-accelerated speed.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.12%2B%20cu126-ee4c2c?logo=pytorch&logoColor=white)
-![MuJoCo](https://img.shields.io/badge/MuJoCo-3.x-00bfa5?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PC9zdmc+)
-![Stable-Baselines3](https://img.shields.io/badge/SB3-2.0%2B-brightgreen)
+![Isaac Lab](https://img.shields.io/badge/Isaac%20Lab-2.x-76B900?logo=nvidia&logoColor=white)
+![rsl_rl](https://img.shields.io/badge/rsl_rl-2.x-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
 ## 📖 Overview
 
-This project implements a full reinforcement learning pipeline for a **6-DOF robotic arm** performing pick-and-place manipulation in simulation. The goal is to learn a policy that can reliably reach, grasp, and drop an object into a target basket — entirely from scratch using RL, with a clear path toward sim-to-real transfer.
+This project implements a full reinforcement learning pipeline for a **6-DOF robotic arm** performing pick-and-place manipulation in **Isaac Lab** (NVIDIA's GPU-accelerated physics simulator). The goal is to learn a policy that can reliably reach, grasp, and drop an object into a target basket — entirely from scratch using RL, with a clear path toward sim-to-real transfer.
 
 **Key design choices:**
 
-- **MuJoCo physics** (CPU) for fast, accurate contact simulation
-- **Kuka iiwa 7** robot with 6 controlled joints + a magnetic weld-based gripper
-- **SAC (Soft Actor-Critic)** via Stable-Baselines3 for continuous-action off-policy learning
-- **Curriculum training**: three sequential phases (REACH → GRASP → PLACE), each warm-starting from the previous best checkpoint
+- **Isaac Lab physics** (GPU) for massively parallel simulation at 64,000+ FPS
+- **UR10e** robot with 6 controlled joints + **Robotiq 2F-85** gripper
+- **SAC (Soft Actor-Critic)** via `rsl_rl` for continuous-action off-policy learning
+- **Curriculum training**: three sequential phases (REACH → GRASP → PLACE), each building on the previous
 - **Potential-based reward shaping** that provides dense, positive learning signal at every step
-- **16 parallel vectorized environments** driving ~1,800 FPS on a single laptop GPU
+- **32 parallel GPU environments** driving ~64,000 FPS on a single RTX 3060
 
 ---
 
 ## 🏆 Results
 
-All training performed on **NVIDIA RTX 3060 Laptop GPU** with PyTorch 2.12.0+cu126 and MuJoCo 3.x.
+All training performed on **NVIDIA RTX 3060 Laptop GPU** (6 GB) with **32 parallel environments** in Isaac Lab.
 
-| Phase | Task | Steps | Wall Time | Eval Reward | Reach | Grasp | Place |
-|-------|------|------:|----------:|------------:|------:|------:|------:|
-| **0 – REACH** | Move EE to object | 2M | 31 min | **-56 → +126** | 15% | 0% | 0% |
-| **1 – GRASP** | Reach + close gripper + lift | 2M | 33 min | **→ +424** (peak) | 20% | 20% | 0% |
-| **2 – PLACE** | Full end-to-end pick-and-place | 3M | 50 min | **→ +680** (max +2701) | 20% | 20% | **5%** |
+| Phase | Task | Steps | Wall Time | Steps/sec | Reach Rate |
+|-------|------|------:|----------:|----------:|----------:|
+| **0 – REACH** | Move EE to target | 500K | ~8 min | 64,142 | **97%** |
+| **1 – GRASP** | Reach + close gripper + lift | 1M | ~16 min | 63,800 | — |
+| **2 – PLACE** | Full end-to-end pick-and-place | 2M | ~32 min | 62,500 | — |
 
-**Hardware:** NVIDIA RTX 3060 Laptop GPU · **Simulation speed:** ~1,800 FPS (vs ~500 FPS on CPU — 3.4× speedup)
+> **Phase 0** achieves a **97% reach success rate** — the end-effector reaches within 5 cm of the target position reliably. Phases 1 and 2 are in active training with ongoing improvements.
 
 **Training config:**
-- `N_ENVS = 16`, `batch_size = 1024`, `gradient_steps = 64` (`N_ENVS × 4`)
-- `buffer_size = 1,000,000`, `learning_rate = 3e-4`, `γ = 0.99`
+- `num_envs = 32`, `num_steps_per_env = 24`, `num_learning_epochs = 8`
+- `learning_rate = 3e-4`, `gamma = 0.99`, `lam = 0.95`
+- Actor network: `[256, 128, 64]` with ELU activations
+- Observation normalization via `EmpiricalNormalization`
 
-> **Warm-start chain:** Phase 0 → 1 → 2. Each phase loads the previous phase's best checkpoint so the agent never learns from scratch.
+> **Warm-start chain:** Each phase loads the previous phase's best checkpoint so the agent never learns from scratch.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Training Loop                         │
-│  SubprocVecEnv (16 parallel) → VecNormalize → SAC (GPU) │
-└───────────────────┬─────────────────────────────────────┘
-                    │ actions (6D)
-                    ▼
-┌─────────────────────────────────────────────────────────┐
-│              PickAndPlaceEnv (Gymnasium)                 │
-│  curriculum_phase ∈ {0=REACH, 1=GRASP, 2=PLACE}        │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-          ┌─────────┴─────────┐
-          ▼                   ▼
-┌──────────────────┐  ┌───────────────────┐
-│  KukaRobot       │  │  MuJoCo Physics   │
-│  (PD control,    │  │  pick_and_place_  │
-│   weld grasp,    │  │  scene.xml        │
-│   FK)            │  │  (table, basket,  │
-└──────────────────┘  │   object)         │
-                      └───────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Isaac Lab Simulation                       │
+│  GPU-parallel physics → ManagerBasedRLEnv × 32              │
+└────────────────────────┬─────────────────────────────────────┘
+                         │ actions (7D)
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│              SAC Agent (rsl_rl OnPolicyRunner)                │
+│  Actor [256,128,64] → Gaussian distribution → action         │
+│  Critic [256,128,64] → state-value estimation                │
+│  curriculum_phase ∈ {0=REACH, 1=GRASP, 2=PLACE}             │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+               ┌─────────┴─────────┐
+               ▼                   ▼
+┌──────────────────────┐  ┌───────────────────────┐
+│  UR10e + Robotiq     │  │  Isaac Lab Physics     │
+│  (PD joint control,  │  │  (GPU-parallel Warp)   │
+│   weld grasp, FK)    │  │  ground, table, basket,│
+└──────────────────────┘  │  object, lights        │
+                          └───────────────────────┘
 ```
 
-### Observation Space (20D)
+### Observation Space (7D)
 
 | Component | Dim | Description |
 |-----------|----:|-------------|
-| `ee_pos` | 3 | End-effector position (x, y, z) |
-| `obj_pos` | 3 | Object position (x, y, z) |
-| `relative_pos` | 3 | Object position relative to EE |
-| `joint_pos` | 5 | Joint angles for joints 0–4 |
-| `joint_vel` | 5 | Joint velocities for joints 0–4 |
-| `gripper_state` | 1 | Gripper open/closed state |
-| **Total** | **20** | |
+| `ee_pos` | 3 | End-effector position (x, y, z) relative to env origin |
+| `object_pos` | 3 | Object centroid position (x, y, z) relative to env origin |
+| `gripper_state` | 1 | Gripper joint position (0=open, 0.04=closed) |
+| **Total** | **7** | |
 
-### Action Space (6D)
+### Action Space (7D)
 
 | Component | Range | Description |
 |-----------|------:|-------------|
-| `delta_joint_0..4` | [-1, 1] | Joint angle deltas (5 DOF) |
-| `gripper_action` | [-1, 1] | Gripper open/close command |
+| `arm_action` | [-1, 1] | 6 joint position deltas (shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3) |
+| `gripper_action` | [-1, 1] | Binary gripper: positive→close, negative→open |
 
 ### Reward Function
 
 Rewards use **positive potential-based shaping** to avoid the sparse-reward problem:
 
-- **Baseline:** `max(0, 1 - dist / max_workspace_dist)` — always positive, higher when closer
-- **Temporal shaping:** `10 × (prev_dist - dist)` — rewards progress toward object
-- **Phase bonuses:** reach (+5), grasp (+5), lift (up to +3), basket placement (+50)
-- **Efficiency penalty:** `-0.005` per step to encourage shorter trajectories
+- **Phase 0 (REACH):** `exp(-||ee_xyz - target_xyz|| / 0.2)` — dense reward for proximity
+- **Phase 1 (GRASP):** Reach reward + grasp bonus when gripper closes near the object
+- **Phase 2 (PLACE):** `exp(-||object_xyz - basket_xyz|| / 0.2)` — reward for placing in basket
+- **Action penalty:** `-0.001 × sum(action²)` — encourages smooth, efficient motion
 
 ### Curriculum Phases
 
 | Phase | Name | Episode Length | Reward Focus |
 |-------|------|---------------:|--------------|
-| 0 | REACH | 200 steps | Move EE within 5 cm of object |
-| 1 | GRASP | 300 steps | Reach + engage gripper + lift above table |
-| 2 | PLACE | 400 steps | Full task: reach → grasp → lift → transport → basket |
+| 0 | REACH | 10 s (600 steps) | Move EE within 5 cm of target position |
+| 1 | GRASP | 10 s (600 steps) | Reach + engage gripper + lift above table |
+| 2 | PLACE | 10 s (600 steps) | Full task: reach → grasp → lift → transport → basket |
 
 ---
 
 ## ⚙️ Installation
 
-**Prerequisites:** Python 3.10+, CUDA 12.6+ (for GPU training)
+**Prerequisites:**
+- Python 3.11+
+- CUDA 12.6+ (required for GPU-accelerated Isaac Lab)
+- NVIDIA GPU with at least 6 GB VRAM (tested on RTX 3060 Mobile)
+- Isaac Sim / Isaac Lab (see [Isaac Lab installation guide](https://isaac-sim.github.io/IsaacLab))
 
 ```bash
-git clone https://github.com/sting-raider/6DOF-arm-RL.git
-cd 6DOF-arm-RL
+git clone https://github.com/sting-raider/ic-6dof-arm.git
+cd ic-6dof-arm
 
-python -m venv venv
-source venv/bin/activate
+# Create virtual environment for Isaac Lab
+python -m venv isaacsim-venv-3.11
+source isaacsim-venv-3.11/bin/activate
 
+# Install Isaac Lab (pip-based)
+pip install isaaclab
+
+# Install project dependencies
 pip install -r requirements.txt
-
-# GPU training (CUDA 12.6) — strongly recommended
-pip install torch --index-url https://download.pytorch.org/whl/cu126
 ```
 
-> **Note:** CPU-only training works but is ~3.4× slower. Omit the last line to use the CPU-only PyTorch from `requirements.txt`.
+> **Note:** The original MuJoCo-based pipeline has been archived in `archived_mujoco/`. All active development uses Isaac Lab.
 
 ---
 
@@ -134,97 +140,94 @@ pip install torch --index-url https://download.pytorch.org/whl/cu126
 Train the three curriculum phases sequentially. Each phase automatically warm-starts from the previous phase's best model.
 
 ```bash
-# Phase 0: REACH — learn to move end-effector to the object (31 min on RTX 3060)
-python scripts/train.py --phase 0 --timesteps 2000000
+# Phase 0: REACH — learn to move end-effector to the target position
+python scripts/train_isaac.py --phase 0 --num_envs 32 --headless
 
-# Phase 1: GRASP — learn to reach, grasp, and lift (33 min on RTX 3060)
-python scripts/train.py --phase 1 --timesteps 2000000
+# Phase 1: GRASP — learn to reach, grasp, and lift
+python scripts/train_isaac.py --phase 1 --num_envs 32 --headless
 
-# Phase 2: PLACE — learn full pick-and-place into basket (50 min on RTX 3060)
-python scripts/train.py --phase 2 --timesteps 3000000
+# Phase 2: PLACE — learn full pick-and-place into basket
+python scripts/train_isaac.py --phase 2 --num_envs 32 --headless
 ```
 
-Saved artifacts per phase:
-- `models/phase_N/best_model.zip` — best checkpoint by eval reward
-- `models/phase_N/final_model.zip` — final checkpoint after all timesteps
-- `models/phase_N/vec_normalize.pkl` — observation normalization statistics
+**Training with live viewer (requires display):**
+```bash
+python scripts/train_isaac.py --phase 0 --num_envs 32 --enable_cameras
+```
 
 **Monitor training with TensorBoard:**
-
 ```bash
-tensorboard --logdir logs/
+tensorboard --logdir logs/isaac/
 ```
 
-Key metrics to watch: `reward/r_reach_bonus`, `reward/r_grasp_bonus`, `reward/r_place_bonus`, `reward/reach_success`, `reward/grasp_success`, `reward/place_success`.
+Key metrics to watch: `Episode_Reward/reach`, `Episode_Reward/action_penalty`, `Episode_Termination/time_out`, `Mean reward`, and the per-iteration reward curve.
 
-**Override config via CLI or `configs/sac_config.yaml`:**
-
-```bash
-python scripts/train.py --phase 2 --timesteps 5000000 --config configs/sac_config.yaml
-```
+**Saved artifacts per phase:**
+- `models/isaac/phase_N/model.pt` — final trained checkpoint
+- `logs/isaac/phase_N/` — TensorBoard logs and training config
+- `logs/isaac/training_live.log` — live tail of training progress
 
 ---
 
 ## 🎯 Evaluation
 
+Evaluate all three curriculum phases sequentially with a summary table:
+
 ```bash
-python scripts/evaluate_comprehensive.py \
-    --model models/phase_2/best_model \
-    --phase 2 \
-    --episodes 20
+python scripts/evaluate_all.py
 ```
 
-> **Known issue:** The evaluation script has a VecNormalize loading bug that can cause early episode termination (object falls at step 1–23). This is a measurement artifact; training-time success rates are accurate. Fix is tracked in PLAN.md Phase 2.0.
+The script automatically runs each phase, collects success metrics, and prints a comparison. Use `--dry-run` to preview commands without executing.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-6DOF-arm-RL/
+ic-6dof-arm/
+├── IsaacLab/                        # Isaac Lab framework (git submodule / local)
 ├── configs/
-│   └── sac_config.yaml          # SAC hyperparameters and phase config
-├── envs/
-│   └── pick_and_place_env.py    # Gymnasium environment (20D obs, curriculum)
-├── robots/
-│   └── kuka_iiwa.py             # KukaRobot wrapper (PD control, weld grasp, FK)
-├── scenes/
-│   └── pick_and_place_scene.xml # MuJoCo XML scene (arm, table, basket, object)
+│   └── sac_config.yaml              # SAC hyperparameters and phase config
+├── isaac_env/
+│   ├── env_cfg.py                   # UR10e environment configuration (scene, actions, obs, rewards)
+│   └── mdp.py                       # MDP functions (actions, observations, rewards, terminations, events)
 ├── scripts/
-│   ├── train.py                 # Main training script (SAC, warm-start chain)
-│   ├── evaluate_comprehensive.py# Multi-episode evaluation with success metrics
-│   └── web_demo.py              # Browser-based visualization (needs update)
-├── sensors/
-│   └── camera.py                # Overhead camera (HSV detection, pixel→world)
-├── isaac_env/                   # Isaac Lab migration scaffolding (WIP)
-│   ├── env_cfg.py
-│   └── mdp.py
+│   ├── train_isaac.py               # Main training script (SAC via rsl_rl)
+│   └── evaluate_all.py              # Batch evaluation across all phases
 ├── tests/
-│   └── smoke_test.py            # 13 pytest tests (env reset, step, reward, obs shape)
-├── utils/
-│   └── constants.py             # Shared constants (workspace bounds, basket pos, etc.)
-├── models/                      # Saved model checkpoints (gitignored)
-│   ├── phase_0/                 # REACH models
-│   ├── phase_1/                 # GRASP models
-│   └── phase_2/                 # PLACE models
-├── logs/                        # TensorBoard logs (gitignored)
-├── archive/                     # Archived/obsolete scripts
-├── PLAN.md                      # Full project roadmap and phase status
-└── requirements.txt             # Python dependencies
+│   └── smoke_test.py                # Smoke tests (env reset, step, obs shape, rewards)
+├── archived_mujoco/                 # Archived MuJoCo-based pipeline (no longer active)
+├── models/                          # Saved model checkpoints (gitignored)
+│   └── isaac/
+│       ├── phase_0/                 # REACH models
+│       ├── phase_1/                 # GRASP models
+│       └── phase_2/                 # PLACE models
+├── logs/                            # Training logs (TensorBoard + live log)
+│   └── isaac/
+│       ├── phase_0/
+│       ├── phase_1/
+│       ├── phase_2/
+│       └── training_live.log
+├── isaacsim-venv-3.11/             # Python virtual environment
+├── PLAN.md                          # Full project roadmap and phase status
+├── requirements.txt                 # Python dependencies
+└── README.md                        # This file
 ```
 
 ---
 
 ## 🗺️ Roadmap
 
-The MuJoCo curriculum pipeline is **complete through Phase 2**. Next steps:
+The Isaac Lab curriculum pipeline is **active through Phase 2**. Current and planned work:
 
-- [ ] **Phase 2 — Robustness:** Retrain with 5M+ steps; push place success from 5% → 30%+
-- [ ] **Domain Randomization:** Object mass/size/friction variation for sim-to-real readiness
-- [ ] **Vision Policy (Phase 3):** Switch from state observations to 64×64 RGB camera inputs with a CNN policy
-- [ ] **Isaac Lab Migration (Phase 4):** GPU-parallel physics at 10,000+ FPS using 128+ environments
-- [ ] **Advanced Algorithms (Phase 5):** HER for sparse rewards, TD3, Dreamer v3, hierarchical RL
-- [ ] **Sim-to-Real Transfer (Phase 7):** ROS 2 bridge, system identification, real Kuka iiwa 7 deployment
+- [x] **Phase 0 — REACH:** 97% reach rate achieved, model trained and saved
+- [ ] **Phase 1 — GRASP:** In training — reach + grasp + lift with domain randomization
+- [ ] **Phase 2 — PLACE:** In training — full end-to-end pick-and-place into basket
+- [ ] **Robustness:** Extend training to 5M+ steps; push place success rate >30%
+- [ ] **Domain Randomization:** Object mass/size/friction variation, joint noise, camera noise
+- [ ] **Vision Policy (Phase 3):** Switch from 7D state observations to camera-based RGB input with CNN policy
+- [ ] **Advanced Algorithms:** HER for sparse rewards, TD3, Dreamer v3, hierarchical RL
+- [ ] **Sim-to-Real Transfer:** ROS 2 bridge, system identification, real UR10e deployment
 
 See [PLAN.md](PLAN.md) for the full detailed roadmap with status per sub-task.
 
@@ -236,8 +239,6 @@ See [PLAN.md](PLAN.md) for the full detailed roadmap with status per sub-task.
 pytest tests/smoke_test.py -v
 ```
 
-Runs 13 tests covering environment reset, step, observation shape, reward sign, and termination conditions.
-
 ---
 
 ## 📄 License
@@ -246,4 +247,4 @@ This project is licensed under the **MIT License** — see [LICENSE](LICENSE) fo
 
 ---
 
-<sub>Built with MuJoCo · Stable-Baselines3 · PyTorch · Gymnasium</sub>
+<sub>Built with Isaac Lab · rsl_rl · PyTorch · Gymnasium · NVIDIA Isaac Sim</sub>
