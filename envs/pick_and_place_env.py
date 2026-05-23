@@ -23,6 +23,7 @@ Key changes from v1:
 
 import numpy as np
 import gymnasium as gym
+import mujoco
 from gymnasium import spaces
 from typing import Optional, Dict
 
@@ -40,6 +41,12 @@ PHASE_MAX_STEPS = {0: 200, 1: 300, 2: 400}
 
 # Workspace radius for reward normalization (meters)
 MAX_WORKSPACE_DIST = 1.0
+
+# Domain randomization ranges
+DR_OBJECT_MASS_RANGE   = (0.05, 0.20)   # kg
+DR_OBJECT_SIZE_RANGE   = (0.015, 0.030) # half-size metres
+DR_FRICTION_RANGE      = (0.5, 2.0)     # friction multiplier
+DR_OBS_NOISE_STD       = 0.002          # Gaussian noise on observations (metres)
 
 
 class PickAndPlaceEnv(gym.Env):
@@ -90,6 +97,7 @@ class PickAndPlaceEnv(gym.Env):
         self._reach_success = False
         self._grasp_success = False
         self._place_success = False
+        self._domain_randomization = True
 
         # For potential-based reward shaping
         self._prev_dist = 0.0
@@ -123,6 +131,9 @@ class PickAndPlaceEnv(gym.Env):
         self._prev_dist_to_basket = float(np.linalg.norm(
             obj_pos - BASKET_POS
         ))
+
+        if self._domain_randomization:
+            self._apply_domain_randomization()
 
         obs = self._get_observation()
         info = {"reset": True}
@@ -158,6 +169,34 @@ class PickAndPlaceEnv(gym.Env):
 
         return obs, reward, terminated, truncated, info
 
+    def _apply_domain_randomization(self) -> None:
+        """
+        Randomize object physical properties each episode for sim-to-real robustness.
+        Randomizes: object mass, object size, object friction.
+        """
+        model = self.robot.model
+
+        # Find the object body index by name
+        obj_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "object")
+        if obj_body_id >= 0:
+            # Randomize mass
+            model.body_mass[obj_body_id] = self.np_random.uniform(
+                *DR_OBJECT_MASS_RANGE
+            )
+
+        # Find object geom and randomize size + friction
+        obj_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "object")
+        if obj_geom_id >= 0:
+            # Randomize size (uniform cube half-size)
+            new_size = self.np_random.uniform(*DR_OBJECT_SIZE_RANGE)
+            model.geom_size[obj_geom_id, :] = new_size  # set all 3 dims
+
+            # Randomize friction (scale base friction)
+            friction_scale = self.np_random.uniform(*DR_FRICTION_RANGE)
+            model.geom_friction[obj_geom_id, 0] = friction_scale  # sliding
+            model.geom_friction[obj_geom_id, 1] = 0.005 * friction_scale  # torsional
+            model.geom_friction[obj_geom_id, 2] = 0.0001 * friction_scale  # rolling
+
     def _get_observation(self) -> np.ndarray:
         """
         Build observation vector (20D).
@@ -168,7 +207,17 @@ class PickAndPlaceEnv(gym.Env):
         """
         ee_pos = self.robot.get_ee_pos()
         obj_pos = self.robot.get_object_pos()
-        relative_pos = obj_pos - ee_pos  # vector from EE to object
+
+        # Domain randomization: small Gaussian noise on position observations
+        if self._domain_randomization:
+            ee_pos = ee_pos + self.np_random.normal(
+                0, DR_OBS_NOISE_STD, size=3
+            ).astype(np.float32)
+            obj_pos = obj_pos + self.np_random.normal(
+                0, DR_OBS_NOISE_STD, size=3
+            ).astype(np.float32)
+
+        relative_pos = obj_pos - ee_pos  # vector from EE to object (consistent)
 
         # Joint state (first 5 actuated joints)
         joint_pos = self.robot.get_joint_positions()[:5]
@@ -184,7 +233,9 @@ class PickAndPlaceEnv(gym.Env):
             joint_vel,      # 5
             gripper,        # 1
         ])  # total = 20
+
         return obs.astype(np.float32)
+
 
     def _compute_reward(self) -> tuple:
         """
