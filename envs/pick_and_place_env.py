@@ -318,10 +318,10 @@ class PickAndPlaceEnv(gym.Env):
                 reward_info["r_place_shaping"] = basket_shaping
                 reward_info["dist_to_basket"] = dist_to_basket
 
-                # Big bonus for successful placement
+                # Big bonus for successful placement (200 makes it salient vs 1800-2700 grasp reward)
                 if self.robot.is_object_in_basket():
-                    reward += 50.0
-                    reward_info["r_place_bonus"] = 50.0
+                    reward += 200.0
+                    reward_info["r_place_bonus"] = 200.0
                     self._place_success = True  # persist until reset
             else:
                 # Not grasped — reset basket shaping baseline so no spurious delta
