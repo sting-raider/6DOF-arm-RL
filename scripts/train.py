@@ -52,6 +52,20 @@ BATCH_SIZE = 4096
 # Gradient steps per environment step collected
 # N_ENVS * 16 = 512 gradient updates per env step = 8x more GPU work
 GRADIENT_STEPS_MULTIPLIER = 16
+class SaveVecNormalizeCallback(BaseCallback):
+    """Saves VecNormalize statistics periodically to match CheckpointCallback."""
+
+    def __init__(self, save_freq: int, save_path: str, verbose: int = 0):
+        super().__init__(verbose)
+        self.save_freq = save_freq
+        self.save_path = save_path
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.save_freq == 0:
+            if isinstance(self.training_env, VecNormalize):
+                path = os.path.join(self.save_path, "vec_normalize.pkl")
+                self.training_env.save(path)
+        return True
 
 
 class RewardInfoCallback(BaseCallback):
@@ -116,7 +130,7 @@ def load_config(config_path: str) -> dict:
 
 
 def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
-          model_dir: str = "models", config_path: str = None):
+          model_dir: str = "models", config_path: str = None, resume_path: str = None):
     """
     Train SAC agent for a given curriculum phase.
 
@@ -126,6 +140,7 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
         log_dir: Directory for logs
         model_dir: Directory for saved models
         config_path: Path to YAML config (optional)
+        resume_path: Path to checkpoint to resume from (optional)
     """
     phase_names = {0: "REACH", 1: "GRASP", 2: "PLACE"}
     phase_name = phase_names.get(phase, "UNKNOWN")
@@ -160,11 +175,36 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
     os.makedirs(run_log_dir, exist_ok=True)
     os.makedirs(run_model_dir, exist_ok=True)
 
+    # Check for warm-start or resume to locate previous stats
+    prev_model_path = None
+    if resume_path:
+        prev_model_path = resume_path
+        print(f"  Resuming from checkpoint: {resume_path}")
+    elif phase > 0:
+        prev_phase_dir = os.path.join(model_dir, f"phase_{phase - 1}")
+        prev_final = os.path.join(prev_phase_dir, "final_model.zip")
+        if os.path.exists(prev_final):
+            prev_model_path = prev_final
+            print(f"  Warm-starting from: {prev_final}")
+
     # Create parallel vectorized training environments
     env = SubprocVecEnv(
         [make_env(xml_path, phase, seed=i) for i in range(N_ENVS)]
     )
-    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+    
+    # Warm-start or resume VecNormalize stats if previous stats exist
+    loaded_norm = False
+    if prev_model_path:
+        norm_path = os.path.join(os.path.dirname(prev_model_path), "vec_normalize.pkl")
+        if os.path.exists(norm_path):
+            print(f"  Loading VecNormalize stats from: {norm_path}")
+            env = VecNormalize.load(norm_path, env)
+            env.training = True
+            env.norm_reward = True
+            loaded_norm = True
+
+    if not loaded_norm:
+        env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
 
     # Create evaluation environment (separate, single-env)
     eval_env = SubprocVecEnv(
@@ -173,6 +213,9 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
     eval_env = VecNormalize(
         eval_env, norm_obs=True, norm_reward=False, clip_obs=10.0
     )
+    
+    # Share observation normalization running stats from training to evaluation
+    eval_env.obs_rms = env.obs_rms
 
     # SAC hyperparameters
     sac_hp = config.get("sac_hyperparameters", {})
@@ -196,15 +239,6 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
         "device": "auto",
     }
 
-    # Check for warm-start from previous phase
-    prev_model_path = None
-    if phase > 0:
-        prev_phase_dir = os.path.join(model_dir, f"phase_{phase - 1}")
-        prev_final = os.path.join(prev_phase_dir, "final_model.zip")
-        if os.path.exists(prev_final):
-            prev_model_path = prev_final
-            print(f"  Warm-starting from: {prev_final}")
-
     # Initialize model
     if prev_model_path:
         model = SAC.load(
@@ -223,11 +257,16 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
     # Stable-Baselines3 callbacks check environment calls (n_calls), which equal timesteps // N_ENVS
     save_freq_steps = max(total_timesteps // 20, 10_000)
     eval_freq_steps = max(total_timesteps // 40, 5_000)
+    save_freq_calls = max(save_freq_steps // N_ENVS, 1)
 
     checkpoint_cb = CheckpointCallback(
-        save_freq=max(save_freq_steps // N_ENVS, 1),  # ~20 checkpoints per run
+        save_freq=save_freq_calls,
         save_path=run_model_dir,
         name_prefix=f"sac_phase_{phase}",
+    )
+    save_vec_norm_cb = SaveVecNormalizeCallback(
+        save_freq=save_freq_calls,
+        save_path=run_model_dir,
     )
     eval_cb = EvalCallback(
         eval_env,
@@ -239,7 +278,7 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
         render=False,
     )
     reward_cb = RewardInfoCallback(log_freq=1000)
-    callbacks = CallbackList([checkpoint_cb, eval_cb, reward_cb])
+    callbacks = CallbackList([checkpoint_cb, save_vec_norm_cb, eval_cb, reward_cb])
 
     # Train
     # IMPORTANT: always reset_num_timesteps=True so CheckpointCallback and
@@ -281,6 +320,8 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str,
                         default=os.path.join(PROJECT_DIR, "configs", "sac_config.yaml"),
                         help="Path to YAML config file")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to a model checkpoint to resume training from")
 
     args = parser.parse_args()
     train(
@@ -289,4 +330,5 @@ if __name__ == "__main__":
         log_dir=args.log_dir,
         model_dir=args.model_dir,
         config_path=args.config,
+        resume_path=args.resume,
     )

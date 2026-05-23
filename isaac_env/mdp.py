@@ -78,7 +78,7 @@ def gripper_action(
 
 def ee_position(
     env: ManagerBasedRLEnv,
-    link_name: str = "robotiq_85_base_link",
+    link_name: str = "wrist_3_link",
 ) -> torch.Tensor:
     """End-effector position (3D) in world frame, relative to env origin."""
     ee_pos_w = env.scene["robot"].data.body_pos_w[
@@ -197,7 +197,7 @@ def action_penalty_l2(
 def reach_reward(
     env: ManagerBasedRLEnv,
     std: float = 0.2,
-    ee_link: str = "robotiq_85_base_link",
+    ee_link: str = "wrist_3_link",
 ) -> torch.Tensor:
     """Phase-aware reach/grasp/place reward.
 

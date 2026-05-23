@@ -41,14 +41,16 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -1.05)),
     )
 
-    # Table (simple box — no external USD needed)
-    table = AssetBaseCfg(
+    # Table — kinematic rigid body with collision
+    table = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Table",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.0)),
         spawn=sim_utils.CuboidCfg(
             size=(0.6, 0.4, 0.02),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.7, 0.7, 0.7)),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.4, 0.0, 0.0)),
     )
 
     # UR10e with Robotiq 2F-85 gripper
@@ -64,13 +66,14 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
     object = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Object",
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.35, 0.0, 0.85),
+            pos=(0.35, 0.0, 0.08),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         spawn=sim_utils.CuboidCfg(
             size=(0.04, 0.04, 0.04),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.2, 0.2)),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
             mass_props=sim_utils.MassPropertiesCfg(mass=0.1),
         ),
     )
@@ -96,17 +99,30 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
     )
 
 
+from isaaclab.envs.mdp import RelativeJointPositionActionCfg, BinaryJointPositionActionCfg
+
 @configclass
 class ActionsCfg:
     """Joint position delta + gripper actions."""
 
-    arm_action: ActionTerm = ActionTerm(
-        func=mdp.joint_pos_delta_action,
-        params={"asset_name": "robot"},
+    arm_action = RelativeJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[
+            "shoulder_pan_joint",
+            "shoulder_lift_joint",
+            "elbow_joint",
+            "wrist_1_joint",
+            "wrist_2_joint",
+            "wrist_3_joint",
+        ],
+        scale=0.05,
+        use_zero_offset=True,
     )
-    gripper_action: ActionTerm = ActionTerm(
-        func=mdp.gripper_action,
-        params={"asset_name": "robot"},
+    gripper_action = BinaryJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["finger_joint"],
+        open_command_expr={"finger_joint": 0.0},
+        close_command_expr={"finger_joint": 0.04},
     )
 
 
@@ -114,7 +130,7 @@ class ActionsCfg:
 class ObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
-        ee_pos = ObsTerm(func=mdp.ee_position, params={"link_name": "robotiq_85_base_link"})
+        ee_pos = ObsTerm(func=mdp.ee_position, params={"link_name": "wrist_3_link"})
         object_pos = ObsTerm(func=mdp.object_position)
         gripper_state = ObsTerm(func=mdp.gripper_state)
 
@@ -140,7 +156,9 @@ class RewardsCfg:
 @configclass
 class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    object_fell = DoneTerm(func=mdp.object_fell)
+    # object_fell uses -1.5 threshold: object must fall well below table to trigger.
+    # Higher thresholds cause false positives due to physics contact initialization.
+    object_fell = DoneTerm(func=mdp.object_fell, params={"minimum_height": -1.5})
 
 
 @configclass

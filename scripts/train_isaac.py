@@ -14,8 +14,12 @@ Usage:
 
 import argparse
 import os
+import sys
 import time
 from datetime import datetime
+
+# Insert project root to sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 """Launch Isaac Sim Simulator first."""
 from isaaclab.app import AppLauncher
@@ -85,10 +89,8 @@ def main():
     ppo_cfg = {
         "algorithm": {
             "class_name": "PPO",
-            "num_minibatches": 4,
-            "update_per_rollout": 8,
-            "batch_size": args_cli.num_envs * 24,  # num_steps_per_env = 24
-            "minibatch_size": args_cli.num_envs * 24 // 4,
+            "num_learning_epochs": 8,
+            "num_mini_batches": 4,
             "learning_rate": 3e-4,
             "gamma": 0.99,
             "lam": 0.95,
@@ -99,20 +101,34 @@ def main():
         },
         "runner": {
             "class_name": "OnPolicyRunner",
-            "policy_class_name": "ActorCritic",
-            "num_steps_per_env": 24,
             "max_iterations": args_cli.max_iterations,
             "experiment_name": f"ur10e_pick_place_phase_{args_cli.phase}",
             "log_dir": log_dir,
-            "save_interval": 50,
             "resume": args_cli.checkpoint is not None,
         },
-        "policy": {
-            "class_name": "ActorCritic",
+        "num_steps_per_env": 24,
+        "save_interval": 50,
+        "multi_gpu": {
+            "enabled": False,
+        },
+        "actor": {
+            "class_name": "rsl_rl.models.mlp_model.MLPModel",
+            "hidden_dims": [256, 128, 64],
             "activation": "elu",
-            "init_noise_std": 1.0,
-            "actor_hidden_dims": [256, 128, 64],
-            "critic_hidden_dims": [256, 128, 64],
+            "obs_normalization": True,
+            "distribution_cfg": {
+                "class_name": "rsl_rl.modules.distribution.GaussianDistribution",
+            },
+        },
+        "critic": {
+            "class_name": "rsl_rl.models.mlp_model.MLPModel",
+            "hidden_dims": [256, 128, 64],
+            "activation": "elu",
+            "obs_normalization": True,
+        },
+        "obs_groups": {
+            "actor": ["policy"],
+            "critic": ["policy"],
         },
     }
 
@@ -138,9 +154,8 @@ def main():
     # ── Save model ────────────────────────────────────────────────────────
     save_dir = os.path.join("models", "isaac", f"phase_{args_cli.phase}")
     os.makedirs(save_dir, exist_ok=True)
-    torch.save(runner.alg.actor_critic.state_dict(),
-               os.path.join(save_dir, "model.pt"))
-    print(f"  Model: {save_dir}/model.pt")
+    runner.save(os.path.join(save_dir, "model.pt"))
+    print(f"  Model saved to: {save_dir}/")
 
     env.close()
     print("  Done!")

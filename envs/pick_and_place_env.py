@@ -174,26 +174,16 @@ class PickAndPlaceEnv(gym.Env):
 
     def _apply_domain_randomization(self) -> None:
         """
-        Randomize object physical properties each episode for sim-to-real robustness.
-        Randomizes: object mass, object size, object friction.
+        Randomize object friction each episode for sim-to-real robustness.
+        Note: We avoid randomizing geom size and mass on the fly, as MuJoCo does
+        not dynamically recompute derived geometric collision meshes and inertia
+        tensors at runtime, which would otherwise cause degenerate collisions.
         """
         model = self.robot.model
 
-        # Find the object body index by name
-        obj_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "object")
-        if obj_body_id >= 0:
-            # Randomize mass
-            model.body_mass[obj_body_id] = self.np_random.uniform(
-                *DR_OBJECT_MASS_RANGE
-            )
-
-        # Find object geom and randomize size + friction
+        # Find object geom and randomize friction
         obj_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "object")
         if obj_geom_id >= 0:
-            # Randomize size (uniform cube half-size)
-            new_size = self.np_random.uniform(*DR_OBJECT_SIZE_RANGE)
-            model.geom_size[obj_geom_id, :] = new_size  # set all 3 dims
-
             # Randomize friction (scale base friction)
             friction_scale = self.np_random.uniform(*DR_FRICTION_RANGE)
             model.geom_friction[obj_geom_id, 0] = friction_scale  # sliding
@@ -242,12 +232,13 @@ class PickAndPlaceEnv(gym.Env):
 
     def _compute_reward(self) -> tuple:
         """
-        Compute reward with positive potential-based shaping.
+        Compute reward with potential-based shaping and strictly negative baseline
+        to avoid survival bonus traps.
 
-        Phase 0 (REACH):  baseline on EE→object distance
-        Phase 1 (GRASP):  + grasp/lift bonuses
+        Phase 0 (REACH):  strictly negative baseline on EE→object distance
+        Phase 1 (GRASP):  + grasp/lift sparse transition bonuses
         Phase 2 (PLACE):  when grasped, swap baseline to object→basket distance
-                          so the agent is guided toward the basket, not held back
+                          and apply strong temporal shaping toward the basket
 
         Returns:
             (reward_float, reward_info_dict)
@@ -256,9 +247,9 @@ class PickAndPlaceEnv(gym.Env):
         obj_pos = self.robot.get_object_pos()
         dist = float(np.linalg.norm(ee_pos - obj_pos))
 
-        # === Positive baseline: higher = closer to object ===
-        # Maps [0, MAX_WORKSPACE_DIST] → [1.0, 0.0]
-        baseline = max(0.0, 1.0 - dist / MAX_WORKSPACE_DIST)
+        # === Strictly negative baseline (distance penalty) ===
+        # Avoids positive survival bonuses where the agent gets rewarded for doing nothing
+        baseline = -dist
 
         # === Temporal shaping: reward for getting closer to object ===
         shaping = 10.0 * (self._prev_dist - dist)
@@ -279,19 +270,22 @@ class PickAndPlaceEnv(gym.Env):
         }
 
         # === Phase 0: REACH ===
-        if dist < 0.05:
+        # Award reach bonus only once on first transition
+        if dist < 0.05 and not self._reach_success:
             reward += 5.0
             reward_info["r_reach_bonus"] = 5.0
-            self._reach_success = True  # persist until reset
+            self._reach_success = True
 
         # === Phase 1+: GRASP ===
         if self.curriculum_phase >= 1:
             if self.robot.is_object_grasped():
-                reward += 5.0
-                reward_info["r_grasp_bonus"] = 5.0
-                self._grasp_success = True  # persist until reset
+                # Award grasp bonus only once on first transition
+                if not self._grasp_success:
+                    reward += 10.0
+                    reward_info["r_grasp_bonus"] = 10.0
+                    self._grasp_success = True
 
-                # Lift bonus: reward for getting object above table
+                # Lift bonus: reward for getting object above table (step-wise, but capped)
                 lift_height = obj_pos[2] - (TABLE_HEIGHT + 0.02)
                 if lift_height > 0.02:
                     lift_bonus = min(lift_height * 20.0, 3.0)  # up to 3.0
@@ -303,26 +297,23 @@ class PickAndPlaceEnv(gym.Env):
             dist_to_basket = float(np.linalg.norm(obj_pos - BASKET_POS))
 
             if self.robot.is_object_grasped():
-                # CRITICAL FIX: when holding the object, REPLACE the EE→object
-                # baseline with object→basket baseline. Without this, the baseline
-                # pulls the EE back toward the already-grasped object, working
-                # directly against the transport reward.
-                basket_baseline = max(0.0, 1.0 - dist_to_basket / MAX_WORKSPACE_DIST)
+                # Swap baselines to basket
+                basket_baseline = -dist_to_basket
                 reward = reward - baseline + basket_baseline  # swap baselines
                 reward_info["r_baseline"] = basket_baseline
 
-                # Strong temporal shaping toward basket (3× previous weight)
+                # Strong temporal shaping toward basket
                 basket_shaping = 15.0 * (self._prev_dist_to_basket - dist_to_basket)
                 self._prev_dist_to_basket = dist_to_basket
                 reward += basket_shaping
                 reward_info["r_place_shaping"] = basket_shaping
                 reward_info["dist_to_basket"] = dist_to_basket
 
-                # Big bonus for successful placement
-                if self.robot.is_object_in_basket():
+                # Big bonus for successful placement (awarded only once)
+                if self.robot.is_object_in_basket() and not self._place_success:
                     reward += 50.0
                     reward_info["r_place_bonus"] = 50.0
-                    self._place_success = True  # persist until reset
+                    self._place_success = True
             else:
                 # Not grasped — reset basket shaping baseline so no spurious delta
                 self._prev_dist_to_basket = dist_to_basket

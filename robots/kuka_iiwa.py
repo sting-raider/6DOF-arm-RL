@@ -168,8 +168,14 @@ class KukaRobot:
         self.data.qpos[obj_qpos_adr + 5] = 0.0
         self.data.qpos[obj_qpos_adr + 6] = 0.0
 
-        # Step to settle physics
+        # Step to settle physics (with active PD control to maintain home position)
         for _ in range(20):
+            current_jpos = self.get_joint_positions()
+            current_jvel = self.get_joint_velocities()
+            for i in range(5):
+                err = self._target_joint_pos[i] - current_jpos[i]
+                ctrl = self._Kp[i] * err - self._Kd[i] * current_jvel[i]
+                self.data.ctrl[self._arm_act_ids[i]] = float(np.clip(ctrl, -1.0, 1.0))
             mujoco.mj_step(self.model, self.data)
 
     def apply_action(self, action: np.ndarray) -> None:
