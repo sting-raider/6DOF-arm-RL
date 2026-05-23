@@ -89,6 +89,7 @@ class PickAndPlaceEnv(gym.Env):
         self._max_episode_steps = PHASE_MAX_STEPS.get(curriculum_phase, 200)
         self._reach_success = False
         self._grasp_success = False
+        self._place_success = False
 
         # For potential-based reward shaping
         self._prev_dist = 0.0
@@ -114,6 +115,7 @@ class PickAndPlaceEnv(gym.Env):
         self._episode_step = 0
         self._reach_success = False
         self._grasp_success = False
+        self._place_success = False
 
         # Initialize shaping distances
         ee_pos = self.robot.get_ee_pos()
@@ -149,7 +151,7 @@ class PickAndPlaceEnv(gym.Env):
         info = {
             "reach_success": self._reach_success,
             "grasp_success": self._grasp_success,
-            "place_success": self.robot.is_object_in_basket(),
+            "place_success": self._place_success,
             "episode_step": self._episode_step,
             **reward_info,
         }
@@ -221,14 +223,14 @@ class PickAndPlaceEnv(gym.Env):
         if dist < 0.05:
             reward += 5.0
             reward_info["r_reach_bonus"] = 5.0
-            self._reach_success = True
+            self._reach_success = True  # persist until reset
 
         # === Phase 1+: GRASP ===
         if self.curriculum_phase >= 1:
             if self.robot.is_object_grasped():
                 reward += 5.0
                 reward_info["r_grasp_bonus"] = 5.0
-                self._grasp_success = True
+                self._grasp_success = True  # persist until reset
 
                 # Lift bonus: reward for getting object above table
                 lift_height = obj_pos[2] - (TABLE_HEIGHT + 0.02)
@@ -252,6 +254,7 @@ class PickAndPlaceEnv(gym.Env):
             if self.robot.is_object_in_basket():
                 reward += 50.0
                 reward_info["r_place_bonus"] = 50.0
+                self._place_success = True  # persist until reset
 
         # Small action efficiency penalty (encourages shorter paths)
         reward -= 0.005
