@@ -86,7 +86,10 @@ def main():
     # ── PPO config ───────────────────────────────────────────────────────
     log_root = os.path.join("logs", "isaac", f"phase_{args_cli.phase}")
     os.makedirs(log_root, exist_ok=True)
-    log_dir = os.path.join(log_root, datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+    # Numbered run dirs — highest number = latest
+    existing = [d for d in os.listdir(log_root) if d.startswith("run_") and os.path.isdir(os.path.join(log_root, d))]
+    run_num = max([int(d.split("_")[1]) for d in existing] + [0]) + 1
+    log_dir = os.path.join(log_root, f"run_{run_num}")
     os.makedirs(log_dir, exist_ok=True)
 
     ppo_cfg = {
