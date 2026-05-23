@@ -220,8 +220,12 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
 
     # Callbacks — use fixed intervals independent of cumulative step counter
     # NOTE: reset_num_timesteps=True below, so save_freq is relative to THIS run
+    # Stable-Baselines3 callbacks check environment calls (n_calls), which equal timesteps // N_ENVS
+    save_freq_steps = max(total_timesteps // 20, 10_000)
+    eval_freq_steps = max(total_timesteps // 40, 5_000)
+
     checkpoint_cb = CheckpointCallback(
-        save_freq=max(total_timesteps // 20, 10_000),  # ~20 checkpoints per run
+        save_freq=max(save_freq_steps // N_ENVS, 1),  # ~20 checkpoints per run
         save_path=run_model_dir,
         name_prefix=f"sac_phase_{phase}",
     )
@@ -229,7 +233,7 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
         eval_env,
         best_model_save_path=run_model_dir,
         log_path=run_log_dir,
-        eval_freq=max(total_timesteps // 40, 5_000),  # ~40 evals
+        eval_freq=max(eval_freq_steps // N_ENVS, 1),  # ~40 evals
         n_eval_episodes=10,
         deterministic=True,
         render=False,
