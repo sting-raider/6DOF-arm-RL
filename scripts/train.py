@@ -218,9 +218,10 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
     else:
         model = SAC(env=env, **sac_kwargs)
 
-    # Callbacks
+    # Callbacks — use fixed intervals independent of cumulative step counter
+    # NOTE: reset_num_timesteps=True below, so save_freq is relative to THIS run
     checkpoint_cb = CheckpointCallback(
-        save_freq=max(total_timesteps // 20, 10_000),  # ~20 checkpoints
+        save_freq=max(total_timesteps // 20, 10_000),  # ~20 checkpoints per run
         save_path=run_model_dir,
         name_prefix=f"sac_phase_{phase}",
     )
@@ -237,11 +238,15 @@ def train(phase: int, total_timesteps: int = None, log_dir: str = "logs",
     callbacks = CallbackList([checkpoint_cb, eval_cb, reward_cb])
 
     # Train
+    # IMPORTANT: always reset_num_timesteps=True so CheckpointCallback and
+    # EvalCallback fire relative to THIS phase's step count (not cumulative).
+    # Model weights are already warm-started via SAC.load() above — the step
+    # counter reset only affects callback scheduling, not the learned policy.
     print("Starting training...")
     model.learn(
         total_timesteps=total_timesteps,
         callback=callbacks,
-        reset_num_timesteps=(phase == 0),
+        reset_num_timesteps=True,
     )
 
     # Save final model and normalization stats
