@@ -236,6 +236,13 @@ def reach_reward(
         print(f"  body_names[{ee_idx}] = '{robot.data.body_names[ee_idx]}'")
         print(f"  ee_pos[0] = {ee_pos[0].tolist()}")
         print(f"  obj_pos[0] = {obj_pos[0].tolist()}")
+        # RAW values before env_origins subtraction
+        obj_raw = env.scene["object"].data.root_pos_w[0]
+        ee_raw = robot.data.body_pos_w[0, ee_idx]
+        env_origin = env.scene.env_origins[0]
+        print(f"  obj root_pos_w[0] RAW = {obj_raw.tolist()}")
+        print(f"  ee body_pos_w[0] RAW = {ee_raw.tolist()}")
+        print(f"  env_origins[0] = {env_origin.tolist()}")
         print(f"  ee_to_obj[0] = {ee_to_obj_debug[0].item():.4f}")
         print(f"  reward[0] = exp(-{ee_to_obj_debug[0].item():.4f}/0.2) = {torch.exp(-ee_to_obj_debug[0]/0.2).item():.4f}")
         print(f"  curriculum_phase = {phase}")
