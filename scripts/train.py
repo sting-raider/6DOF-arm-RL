@@ -45,12 +45,13 @@ DEFAULT_TIMESTEPS = {0: 2_000_000, 1: 2_000_000, 2: 3_000_000}
 N_ENVS = 32
 
 # Batch size — larger = more GPU work per gradient update
-# 2048 fills RTX 3060 compute better (was 30% util at 1024)
-BATCH_SIZE = 2048
+# 4096 + 16× gradient steps = 512 updates × 4096 samples per env step
+# Fills RTX 3060 compute (was 16-24% util at 2048)
+BATCH_SIZE = 4096
 
 # Gradient steps per environment step collected
-# N_ENVS * 4 means 4 gradient updates per env step = GPU works 4x harder
-GRADIENT_STEPS_MULTIPLIER = 4
+# N_ENVS * 16 = 512 gradient updates per env step = 8x more GPU work
+GRADIENT_STEPS_MULTIPLIER = 16
 
 
 class RewardInfoCallback(BaseCallback):
@@ -68,7 +69,7 @@ class RewardInfoCallback(BaseCallback):
         for info in infos:
             for key in ["r_baseline", "r_shaping", "r_reach_bonus",
                         "r_grasp_bonus", "r_lift_bonus", "r_place_shaping",
-                        "r_transport_bonus", "r_place_bonus", "dist_to_obj"]:
+                        "r_place_bonus", "dist_to_obj"]:
                 if key in info:
                     if key not in self._reward_components:
                         self._reward_components[key] = []
