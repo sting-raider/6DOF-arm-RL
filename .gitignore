@@ -6,21 +6,19 @@ __pycache__/
 .venv/
 venv/
 
-# MuJoCo
+# MuJoCo (archived locally, not in project)
+archived_mujoco/
 *.mjb
 *.mjmodel
-MUJOCO_LOG.TXT
 
 # Logs
 logs/
-logs_old_v1/
 wandb/
 runs/
 *.log
 
 # Models (binaries — too large for git)
 models/
-models_old_v1/
 
 # Videos & screenshots
 videos/
@@ -31,11 +29,6 @@ IsaacLab/
 IsaacGymEnvs/
 isaaclab-venv/
 isaacsim-venv-3.11/
-
-# Old reports
-FINAL_STATUS.md
-REPORT.md
-ISAAC_SIM_SETUP.md
 
 # IDE
 .vscode/

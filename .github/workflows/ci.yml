@@ -32,8 +32,6 @@ jobs:
         sudo apt-get install -y -q \
           libgl1-mesa-glx \
           libglu1-mesa \
-          libglfw3 \
-          libglew-dev \
           libosmesa6-dev \
           xvfb
 
@@ -44,12 +42,10 @@ jobs:
         pip install -r requirements.txt
 
     - name: Run smoke tests
-      env:
-        MUJOCO_GL: osmesa
       run: |
         python -m pytest tests/smoke_test.py -v --tb=short
 
     - name: Lint (errors + undefined names only)
       run: |
         pip install flake8
-        flake8 envs/ robots/ scripts/train.py --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 isaac_env/ scripts/ configs/ --count --select=E9,F63,F7,F82 --show-source --statistics
