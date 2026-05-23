@@ -21,6 +21,7 @@ Key changes from v1:
   - Reward component logging for diagnostics
 """
 
+import os
 import numpy as np
 import gymnasium as gym
 import mujoco
@@ -97,7 +98,9 @@ class PickAndPlaceEnv(gym.Env):
         self._reach_success = False
         self._grasp_success = False
         self._place_success = False
-        self._domain_randomization = True
+        self._domain_randomization = os.environ.get(
+            "HERMES_DISABLE_DR", "0"
+        ) != "1"
 
         # For potential-based reward shaping
         self._prev_dist = 0.0
