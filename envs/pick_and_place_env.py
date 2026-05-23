@@ -274,6 +274,7 @@ class PickAndPlaceEnv(gym.Env):
             "r_grasp_bonus": 0.0,
             "r_lift_bonus": 0.0,
             "r_place_shaping": 0.0,
+            "r_transport_bonus": 0.0,
             "r_place_bonus": 0.0,
             "dist_to_obj": dist,
         }
@@ -311,12 +312,18 @@ class PickAndPlaceEnv(gym.Env):
                 reward = reward - baseline + basket_baseline  # swap baselines
                 reward_info["r_baseline"] = basket_baseline
 
-                # Strong temporal shaping toward basket (3× previous weight)
-                basket_shaping = 15.0 * (self._prev_dist_to_basket - dist_to_basket)
+                # Strong temporal shaping toward basket (25× gives clear gradient)
+                basket_shaping = 25.0 * (self._prev_dist_to_basket - dist_to_basket)
                 self._prev_dist_to_basket = dist_to_basket
                 reward += basket_shaping
                 reward_info["r_place_shaping"] = basket_shaping
                 reward_info["dist_to_basket"] = dist_to_basket
+
+                # Continuous transport bonus: smooth reward for getting closer to basket
+                # This bridges the gap between baseline (~0.7) and place bonus (50.0)
+                transport_bonus = max(0.0, 1.0 - dist_to_basket / MAX_WORKSPACE_DIST) * 2.0
+                reward += transport_bonus
+                reward_info["r_transport_bonus"] = transport_bonus
 
                 # Big bonus for successful placement
                 if self.robot.is_object_in_basket():
