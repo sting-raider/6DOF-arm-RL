@@ -155,23 +155,32 @@ def reset_root_state_uniform(
     pose_range: dict,
     velocity_range: dict,
 ) -> None:
-    """Reset a rigid object's root state with uniform random pose + velocity."""
+    """Reset a rigid object's root state with uniform random pose + velocity.
+
+    pose_range values are treated as ABSOLUTE world coordinates (not offsets).
+    Default quaternion and zero velocities are used.
+    """
     asset = env.scene[asset_cfg.name]
-    default_root_state = asset.data.default_root_state[env_ids]
 
-    # Build position tensor
-    pos = default_root_state[:, :3].clone()
+    # Build position tensor from scratch using absolute ranges
+    pos = torch.zeros(len(env_ids), 3, device=env.device)
     if "x" in pose_range:
-        pos[:, 0] += torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["x"])
+        pos[:, 0] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["x"])
+    else:
+        pos[:, 0] = asset.data.root_pos_w[env_ids, 0]
     if "y" in pose_range:
-        pos[:, 1] += torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["y"])
+        pos[:, 1] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["y"])
+    else:
+        pos[:, 1] = asset.data.root_pos_w[env_ids, 1]
     if "z" in pose_range:
-        pos[:, 2] += torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["z"])
+        pos[:, 2] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["z"])
+    else:
+        pos[:, 2] = asset.data.root_pos_w[env_ids, 2]
 
-    # Orientation (default quaternion)
-    quat = default_root_state[:, 3:7].clone()
+    # Orientation — use default identity quaternion
+    quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=env.device).repeat(len(env_ids), 1)
 
-    # Velocity
+    # Velocity — zero or randomized
     vel = torch.zeros(len(env_ids), 6, device=env.device)
     if "x" in velocity_range:
         vel[:, 0] = torch.empty(len(env_ids), device=env.device).uniform_(*velocity_range["x"])

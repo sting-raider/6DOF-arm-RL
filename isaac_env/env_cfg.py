@@ -75,7 +75,7 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
     object = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Object",
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.35, 0.0, 0.08),
+            pos=(0.35, 0.0, 0.85),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         spawn=sim_utils.CuboidCfg(
