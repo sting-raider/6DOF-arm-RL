@@ -41,12 +41,12 @@ PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_TIMESTEPS = {0: 2_000_000, 1: 2_000_000, 2: 3_000_000}
 
 # Number of parallel environments — more envs = more CPU simulation throughput
-# = more experience fed to GPU per second
-N_ENVS = 16
+# = more experience fed to GPU per second. 32 fills 20 cores well.
+N_ENVS = 32
 
 # Batch size — larger = more GPU work per gradient update
-# 1024 fills GPU compute much better than 256 on RTX 3060
-BATCH_SIZE = 1024
+# 2048 fills RTX 3060 compute better (was 30% util at 1024)
+BATCH_SIZE = 2048
 
 # Gradient steps per environment step collected
 # N_ENVS * 4 means 4 gradient updates per env step = GPU works 4x harder
@@ -68,7 +68,7 @@ class RewardInfoCallback(BaseCallback):
         for info in infos:
             for key in ["r_baseline", "r_shaping", "r_reach_bonus",
                         "r_grasp_bonus", "r_lift_bonus", "r_place_shaping",
-                        "r_place_bonus", "dist_to_obj"]:
+                        "r_transport_bonus", "r_place_bonus", "dist_to_obj"]:
                 if key in info:
                     if key not in self._reward_components:
                         self._reward_components[key] = []
