@@ -127,9 +127,12 @@ class ObservationsCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms — positive shaping throughout."""
+    """Reward terms — positive shaping throughout.
 
-    # Phase-dependent: we override in post_init based on curriculum_phase
+    ``reach_reward`` reads ``env.cfg.curriculum_phase`` at runtime and dispatches
+    REACH / GRASP / PLACE rewards automatically — no phase-switching needed in config.
+    """
+
     reach = RewTerm(func=mdp.reach_reward, weight=1.0)
     action_penalty = RewTerm(func=mdp.action_penalty_l2, weight=-0.001)
 
@@ -179,11 +182,3 @@ class PickPlaceEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 1.0 / 60.0
         self.sim.render_interval = self.decimation
         self.viewer.eye = (1.5, 1.5, 1.5)
-
-        # Set reward function based on phase
-        if self.curriculum_phase == 0:
-            self.rewards.reach.weight = 1.0
-        elif self.curriculum_phase == 1:
-            self.rewards.reach.func = mdp.grasp_reward
-        elif self.curriculum_phase == 2:
-            self.rewards.reach.func = mdp.place_reward
