@@ -92,7 +92,11 @@ def object_position(
     object_name: str = "object",
 ) -> torch.Tensor:
     """Object centroid position (3D) in world frame, relative to env origin."""
-    return env.scene[object_name].data.root_pos_w - env.scene.env_origins
+    # Use body_pos_w for consistent per-env indexing (matches Articulation convention)
+    obj = env.scene[object_name]
+    if obj.data.body_pos_w is not None:
+        return obj.data.body_pos_w[:, 0, :] - env.scene.env_origins
+    return obj.data.root_pos_w - env.scene.env_origins
 
 
 def gripper_state(
@@ -214,20 +218,34 @@ def reach_reward(
     ee_pos = robot.data.body_pos_w[:, ee_idx] - env.scene.env_origins
 
     # Object position
-    obj_pos = env.scene["object"].data.root_pos_w - env.scene.env_origins
-
-    # Basket centre (from env_cfg: basket at (0.6, 0.0, 0.80))
-    basket_center = torch.tensor([0.6, 0.0, 0.80], device=env.device, dtype=torch.float32)
-
-    # Distances
-    ee_to_obj = torch.norm(ee_pos - obj_pos, dim=1)
-    obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
+    obj_pos = object_position(env)
 
     phase = env.cfg.curriculum_phase
 
+    # DEBUG: print first env's values on first call
+    if not hasattr(reach_reward, '_debug_printed'):
+        reach_reward._debug_printed = True
+        ee_to_obj_debug = torch.norm(ee_pos - obj_pos, dim=1)
+        print(f"[reach_reward DEBUG] ee_link='{ee_link}', ee_idx={ee_idx}")
+        print(f"  body_names[{ee_idx}] = '{robot.data.body_names[ee_idx]}'")
+        print(f"  ee_pos[0] = {ee_pos[0].tolist()}")
+        print(f"  obj_pos[0] = {obj_pos[0].tolist()}")
+        print(f"  ee_to_obj[0] = {ee_to_obj_debug[0].item():.4f}")
+        print(f"  reward[0] = exp(-{ee_to_obj_debug[0].item():.4f}/0.2) = {torch.exp(-ee_to_obj_debug[0]/0.2).item():.4f}")
+        print(f"  curriculum_phase = {phase}")
+
+    # Distances
+    ee_to_obj = torch.norm(ee_pos - obj_pos, dim=1)
+
+    # Basket centre (from env_cfg: basket at (0.6, 0.0, 0.80))
+    basket_center = torch.tensor([0.6, 0.0, 0.80], device=env.device, dtype=torch.float32)
+    obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
+
     if phase == 0:
-        # ── REACH: smooth distance to object ──
-        return torch.exp(-ee_to_obj / std)
+        # ── REACH: distance from EE to fixed target position ──
+        target = torch.tensor([0.35, 0.0, 0.08], device=env.device, dtype=torch.float32)
+        ee_to_target = torch.norm(ee_pos - target.unsqueeze(0), dim=1)
+        return torch.exp(-ee_to_target / std)
 
     elif phase == 1:
         # ── GRASP: reach + gripper-closed bonus ──

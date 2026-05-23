@@ -59,6 +59,15 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
         init_state=ArticulationCfg.InitialStateCfg(
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
+            joint_pos={
+                # Override default pose: face the table (+X), arm slightly lifted
+                "shoulder_pan_joint": 0.0,
+                "shoulder_lift_joint": -1.0,
+                "elbow_joint": 1.5,
+                "wrist_1_joint": -1.0,
+                "wrist_2_joint": -1.0,
+                "wrist_3_joint": 0.0,
+            },
         ),
     )
 

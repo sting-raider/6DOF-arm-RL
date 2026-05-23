@@ -10,6 +10,9 @@ Usage:
 
     # Train with viewer (requires display):
     python scripts/train_isaac.py --phase 0 --num_envs 32 --enable_cameras
+
+    # Watch live progress in another terminal:
+    tail -f logs/isaac/training_live.log
 """
 
 import argparse
