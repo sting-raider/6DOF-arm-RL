@@ -68,7 +68,7 @@ class RewardInfoCallback(BaseCallback):
         for info in infos:
             for key in ["r_baseline", "r_shaping", "r_reach_bonus",
                         "r_grasp_bonus", "r_lift_bonus", "r_place_shaping",
-                        "r_transport_bonus", "r_place_bonus", "dist_to_obj"]:
+                        "r_place_bonus", "dist_to_obj"]:
                 if key in info:
                     if key not in self._reward_components:
                         self._reward_components[key] = []
