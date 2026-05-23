@@ -242,10 +242,8 @@ def reach_reward(
     obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
 
     if phase == 0:
-        # ── REACH: distance from EE to fixed target position ──
-        target = torch.tensor([0.35, 0.0, 0.08], device=env.device, dtype=torch.float32)
-        ee_to_target = torch.norm(ee_pos - target.unsqueeze(0), dim=1)
-        return torch.exp(-ee_to_target / std)
+        # ── REACH: distance from EE to object ──
+        return torch.exp(-ee_to_obj / std)
 
     elif phase == 1:
         # ── GRASP: reach + gripper-closed bonus ──
