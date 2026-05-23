@@ -241,6 +241,11 @@ class PickAndPlaceEnv(gym.Env):
         """
         Compute reward with positive potential-based shaping.
 
+        Phase 0 (REACH):  baseline on EE→object distance
+        Phase 1 (GRASP):  + grasp/lift bonuses
+        Phase 2 (PLACE):  when grasped, swap baseline to object→basket distance
+                          so the agent is guided toward the basket, not held back
+
         Returns:
             (reward_float, reward_info_dict)
         """
@@ -252,7 +257,7 @@ class PickAndPlaceEnv(gym.Env):
         # Maps [0, MAX_WORKSPACE_DIST] → [1.0, 0.0]
         baseline = max(0.0, 1.0 - dist / MAX_WORKSPACE_DIST)
 
-        # === Temporal shaping: reward for getting closer ===
+        # === Temporal shaping: reward for getting closer to object ===
         shaping = 10.0 * (self._prev_dist - dist)
         self._prev_dist = dist
 
@@ -291,21 +296,33 @@ class PickAndPlaceEnv(gym.Env):
                     reward_info["r_lift_bonus"] = lift_bonus
 
         # === Phase 2: PLACE ===
-        if self.curriculum_phase >= 2 and self.robot.is_object_grasped():
+        if self.curriculum_phase >= 2:
             dist_to_basket = float(np.linalg.norm(obj_pos - BASKET_POS))
 
-            # Shaping toward basket
-            basket_shaping = 5.0 * (self._prev_dist_to_basket - dist_to_basket)
-            self._prev_dist_to_basket = dist_to_basket
-            reward += basket_shaping
-            reward_info["r_place_shaping"] = basket_shaping
-            reward_info["dist_to_basket"] = dist_to_basket
+            if self.robot.is_object_grasped():
+                # CRITICAL FIX: when holding the object, REPLACE the EE→object
+                # baseline with object→basket baseline. Without this, the baseline
+                # pulls the EE back toward the already-grasped object, working
+                # directly against the transport reward.
+                basket_baseline = max(0.0, 1.0 - dist_to_basket / MAX_WORKSPACE_DIST)
+                reward = reward - baseline + basket_baseline  # swap baselines
+                reward_info["r_baseline"] = basket_baseline
 
-            # Big bonus for successful placement
-            if self.robot.is_object_in_basket():
-                reward += 50.0
-                reward_info["r_place_bonus"] = 50.0
-                self._place_success = True  # persist until reset
+                # Strong temporal shaping toward basket (3× previous weight)
+                basket_shaping = 15.0 * (self._prev_dist_to_basket - dist_to_basket)
+                self._prev_dist_to_basket = dist_to_basket
+                reward += basket_shaping
+                reward_info["r_place_shaping"] = basket_shaping
+                reward_info["dist_to_basket"] = dist_to_basket
+
+                # Big bonus for successful placement
+                if self.robot.is_object_in_basket():
+                    reward += 50.0
+                    reward_info["r_place_bonus"] = 50.0
+                    self._place_success = True  # persist until reset
+            else:
+                # Not grasped — reset basket shaping baseline so no spurious delta
+                self._prev_dist_to_basket = dist_to_basket
 
         # Small action efficiency penalty (encourages shorter paths)
         reward -= 0.005
