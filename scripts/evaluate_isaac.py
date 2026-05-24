@@ -67,7 +67,7 @@ def main():
     runner = OnPolicyRunner(env, ppo_cfg, log_dir="/tmp/eval_log", device=device)
 
     print(f"  Loading model from {args_cli.model}...")
-    runner.load(args_cli.model)  # strict=True — normalizer stats must match
+    runner.load(args_cli.model)  # configs match (same obs_normalization)
     print("  Model loaded.\n")
 
     # Cache scene references for real (unnormalized) position queries

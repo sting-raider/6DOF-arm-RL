@@ -27,23 +27,26 @@ This project implements a full reinforcement learning pipeline for a **6-DOF rob
 
 ## 🏆 Results
 
-All training performed on **NVIDIA RTX 3060 Laptop GPU** (6 GB) with **32 parallel environments** in Isaac Lab.
+All training on **NVIDIA RTX 3060 Laptop GPU** (6 GB) with **6,144 parallel environments** (stable maximum for 6GB VRAM).
 
-| Phase | Task | Steps | Wall Time | Steps/sec | Reach Rate |
-|-------|------|------:|----------:|----------:|----------:|
-| **0 – REACH** | Move EE to target | 500K | ~8 min | 64,142 | **97%** |
-| **1 – GRASP** | Reach + close gripper + lift | 1M | ~16 min | 63,800 | — |
-| **2 – PLACE** | Full end-to-end pick-and-place | 2M | ~32 min | 62,500 | — |
-
-> **Phase 0** achieves a **97% reach success rate** — the end-effector reaches within 5 cm of the target position reliably. Phases 1 and 2 are in active training with ongoing improvements.
+| Phase | Task | Reward (train) | Wall Time | Envs | Status |
+|-------|------|:--------:|----------:|-----:|--------|
+| **0 – REACH** | Move EE to object | 0.64-0.69 | ~25 min | 6144 | 🔄 Retraining |
+| **1 – GRASP** | Reach + close + lift | — | ~22 min | 6144 | ⏳ Queued |
+| **2 – PLACE** | Pick → basket | — | ~16 min | 4096 | ⏳ Queued |
 
 **Training config:**
-- `num_envs = 32`, `num_steps_per_env = 24`, `num_learning_epochs = 8`
-- `learning_rate = 3e-4`, `gamma = 0.99`, `lam = 0.95`
-- Actor network: `[256, 128, 64]` with ELU activations
-- Observation normalization via `EmpiricalNormalization`
+- Algorithm: **PPO** (rsl_rl), `num_envs = 6144` (Phase 0-1) / `4096` (Phase 2), `num_steps_per_env = 24`
+- `learning_rate = 3e-4`, `gamma = 0.99`, `lam = 0.95`, `entropy_coef = 0.01`
+- Actor/Critic: `[256, 128, 64]` MLP with ELU activations
+- **Observation normalization DISABLED** — `EmpiricalNormalization` co-adapts with the policy during training, producing corrupted statistics that break inference. See [Known Issues](#-known-issues).
 
-> **Warm-start chain:** Each phase loads the previous phase's best checkpoint so the agent never learns from scratch.
+> **Warm-start chain:** Phase N loads Phase N−1 checkpoint → policy transfers knowledge between phases.
+
+**Evaluation:** Uses raw Isaac Lab scene positions (not normalized observations) for success detection:
+- **Reach:** EE within 5cm of object
+- **Grasp:** Gripper closed (>0.02) AND object lifted above table (>0.88m)
+- **Place:** Object within 10cm of basket center
 
 ---
 
@@ -209,25 +212,43 @@ ic-6dof-arm/
 │       ├── phase_2/
 │       └── training_live.log
 ├── isaacsim-venv-3.11/             # Python virtual environment
-├── PLAN.md                          # Full project roadmap and phase status
 ├── requirements.txt                 # Python dependencies
 └── README.md                        # This file
 ```
 
 ---
 
+## 🧪 Tests
+
+```bash
+pytest tests/smoke_test.py -v
+```
+
+---
+
+## ⚠️ Known Issues
+
+### EmpiricalNormalization breaks inference
+
+RLSL-RL's `EmpiricalNormalization` accumulates running statistics during training. For observations with near-constant values (e.g., gripper state = 0.0 in Phase 0 REACH), the running variance collapses to zero, producing extreme or NaN standard deviations. When the model is saved, these corrupted normalizer stats are persisted. At inference time, normalized observations become garbage, and the policy outputs nonsense actions.
+
+**Fix applied:** `obs_normalization: False` in both training and eval scripts. The observation values (0-1.5m positions, 0-0.04 gripper) are already in reasonable ranges — normalization is unnecessary for this task.
+
+### CUDA OOM at >6144 envs
+
+On the 6GB RTX 3060, 8192 environments cause PhysX CUDA OOM during initialization. **6144 is the stable maximum** for Phases 0-1. Phase 2 (with basket) uses 4096 for headroom.
+
+---
+
 ## 🗺️ Roadmap
 
-The Isaac Lab curriculum pipeline is **active through Phase 2**. Current and planned work:
-
-- [x] **Phase 0 — REACH:** 97% reach rate achieved, model trained and saved
-- [ ] **Phase 1 — GRASP:** In training — reach + grasp + lift with domain randomization
-- [ ] **Phase 2 — PLACE:** In training — full end-to-end pick-and-place into basket
-- [ ] **Robustness:** Extend training to 5M+ steps; push place success rate >30%
-- [ ] **Domain Randomization:** Object mass/size/friction variation, joint noise, camera noise
-- [ ] **Vision Policy (Phase 3):** Switch from 7D state observations to camera-based RGB input with CNN policy
-- [ ] **Advanced Algorithms:** HER for sparse rewards, TD3, Dreamer v3, hierarchical RL
-- [ ] **Sim-to-Real Transfer:** ROS 2 bridge, system identification, real UR10e deployment
+- [ ] **Phase 0 — REACH:** Training with `obs_normalization=False`, 1000 iterations
+- [ ] **Phase 1 — GRASP:** Warm-start from Phase 0
+- [ ] **Phase 2 — PLACE:** Warm-start from Phase 1
+- [ ] **Evaluation:** 20-episode eval per phase with real scene position metrics
+- [ ] **Domain Randomization:** Object mass/size/friction variation
+- [ ] **Vision Policy (Phase 3):** RGB camera input → CNN policy
+- [ ] **Sim-to-Real Transfer:** ROS 2 bridge, real UR10e deployment
 
 See [PLAN.md](PLAN.md) for the full detailed roadmap with status per sub-task.
 
