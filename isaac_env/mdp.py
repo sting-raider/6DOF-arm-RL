@@ -255,8 +255,15 @@ def reach_reward(
         return reach + grasp_bonus
 
     elif phase == 2:
-        # ── PLACE: object near basket ──
-        return torch.exp(-obj_to_basket / std)
+        # ── PLACE: Phase 1 reach+grasp + basket bonus ──
+        reach = torch.exp(-ee_to_obj / std)
+        gripper_joint_pos = robot.data.joint_pos[:, -1]
+        closedness = torch.clamp(gripper_joint_pos / 0.04, 0.0, 1.0)
+        near_mask = torch.exp(-ee_to_obj / (std * 3.0))
+        grasp_bonus = 0.5 * closedness * near_mask
+        # Basket bonus: reward object being close to basket
+        basket_bonus = torch.exp(-obj_to_basket / std)
+        return reach + grasp_bonus + basket_bonus
 
     else:
         return torch.zeros(env.num_envs, device=env.device)
