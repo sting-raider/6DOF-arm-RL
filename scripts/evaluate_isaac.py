@@ -57,18 +57,30 @@ def main():
         "multi_gpu": {"enabled": False},
         "actor": {"class_name": "rsl_rl.models.mlp_model.MLPModel",
                   "hidden_dims": [256, 128, 64], "activation": "elu",
-                  "obs_normalization": False,
+                  "obs_normalization": True,
                   "distribution_cfg": {"class_name": "rsl_rl.modules.distribution.GaussianDistribution"}},
         "critic": {"class_name": "rsl_rl.models.mlp_model.MLPModel",
                    "hidden_dims": [256, 128, 64], "activation": "elu",
-                   "obs_normalization": False},
+                   "obs_normalization": True},
         "obs_groups": {"actor": ["policy"], "critic": ["policy"]},
     }
     runner = OnPolicyRunner(env, ppo_cfg, log_dir="/tmp/eval_log", device=device)
 
     print(f"  Loading model from {args_cli.model}...")
-    runner.load(args_cli.model)  # configs match (same obs_normalization)
-    print("  Model loaded.\n")
+    runner.load(args_cli.model)  # loads training normalizer stats
+    print("  Model loaded.")
+
+    # ── Warmup: adapt normalizer to eval environment ─────────────────────
+    print("  Warming up normalizer for eval environment...")
+    obs_dict = env.get_observations()
+    for _ in range(20):  # 20 steps to update running stats
+        with torch.no_grad():
+            actions = runner.alg.actor(obs_dict, stochastic_output=False)
+        obs_dict, _, _, _ = env.step(actions)
+    # Reset env to start eval from clean state
+    if hasattr(env, 'reset'):
+        env.reset()
+    print("  Warmup complete.\n")
 
     # Cache scene references for real (unnormalized) position queries
     robot = raw_env.scene["robot"]

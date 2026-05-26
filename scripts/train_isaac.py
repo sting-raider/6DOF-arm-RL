@@ -121,7 +121,7 @@ def main():
             "class_name": "rsl_rl.models.mlp_model.MLPModel",
             "hidden_dims": [256, 128, 64],
             "activation": "elu",
-            "obs_normalization": False,
+            "obs_normalization": True,
             "distribution_cfg": {
                 "class_name": "rsl_rl.modules.distribution.GaussianDistribution",
             },
@@ -130,7 +130,7 @@ def main():
             "class_name": "rsl_rl.models.mlp_model.MLPModel",
             "hidden_dims": [256, 128, 64],
             "activation": "elu",
-            "obs_normalization": False,
+            "obs_normalization": True,
         },
         "obs_groups": {
             "actor": ["policy"],

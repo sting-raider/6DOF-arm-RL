@@ -139,9 +139,9 @@ class ActionsCfg:
 class ObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
-        ee_pos = ObsTerm(func=mdp.ee_position_scaled, params={"link_name": "wrist_3_link"})
-        object_pos = ObsTerm(func=mdp.object_position_scaled)
-        gripper_state = ObsTerm(func=mdp.gripper_state_scaled)
+        ee_pos = ObsTerm(func=mdp.ee_position, params={"link_name": "wrist_3_link"})
+        object_pos = ObsTerm(func=mdp.object_position)
+        gripper_state = ObsTerm(func=mdp.gripper_state)
 
         def __post_init__(self):
             self.enable_corruption = True
