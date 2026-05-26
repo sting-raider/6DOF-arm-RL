@@ -95,15 +95,17 @@ def main():
     ppo_cfg = {
         "algorithm": {
             "class_name": "PPO",
-            "num_learning_epochs": 8,
+            "num_learning_epochs": 5,
             "num_mini_batches": 4,
             "learning_rate": 3e-4,
             "gamma": 0.99,
             "lam": 0.95,
             "clip_param": 0.2,
+            "value_loss_coef": 1.0,
             "desired_kl": 0.01,
             "entropy_coef": 0.01,
             "max_grad_norm": 1.0,
+            "rnd_cfg": None,
         },
         "runner": {
             "class_name": "OnPolicyRunner",
@@ -121,7 +123,7 @@ def main():
             "class_name": "rsl_rl.models.mlp_model.MLPModel",
             "hidden_dims": [256, 128, 64],
             "activation": "elu",
-            "obs_normalization": False,  # observations are pre-scaled in env_cfg
+            "obs_normalization": True,
             "distribution_cfg": {
                 "class_name": "rsl_rl.modules.distribution.GaussianDistribution",
             },
@@ -130,7 +132,7 @@ def main():
             "class_name": "rsl_rl.models.mlp_model.MLPModel",
             "hidden_dims": [256, 128, 64],
             "activation": "elu",
-            "obs_normalization": False,  # observations are pre-scaled in env_cfg
+            "obs_normalization": True,
         },
         "obs_groups": {
             "actor": ["policy"],
@@ -145,6 +147,16 @@ def main():
 
     # ── Create runner ────────────────────────────────────────────────────
     runner = OnPolicyRunner(env, ppo_cfg, log_dir=log_dir, device=device)
+
+    # ── Freeze obs normalizer after warmup ───────────────────────────────
+    # The EmpiricalNormalization drifts with the changing policy, causing
+    # reward collapse after ~50-80 iterations. Freezing it after N samples
+    # keeps the input scaling stable while still normalizing the raw obs.
+    NORMALIZER_FREEZE_AFTER = args_cli.num_envs * 24 * 5  # ~5 rollouts
+    for model in [runner.alg.actor, runner.alg.critic]:
+        if hasattr(model, 'obs_normalizer') and hasattr(model.obs_normalizer, 'until'):
+            model.obs_normalizer.until = NORMALIZER_FREEZE_AFTER
+            print(f"  Freezing {model.__class__.__name__} normalizer after {NORMALIZER_FREEZE_AFTER} samples")
 
     if args_cli.checkpoint:
         print(f"  Loading checkpoint: {args_cli.checkpoint}")
