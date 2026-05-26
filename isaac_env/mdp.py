@@ -91,9 +91,10 @@ def object_position(
     env: ManagerBasedRLEnv,
     object_name: str = "object",
 ) -> torch.Tensor:
-    """Object centroid position (3D). root_pos_w is already local (relative to env origin)."""
+    """Object centroid position (3D) in local env frame (relative to env origin)."""
     obj = env.scene[object_name]
-    return obj.data.root_pos_w  # already local — no env_origins subtraction needed
+    # root_pos_w is world-frame; subtract env_origins to get local frame
+    return obj.data.root_pos_w - env.scene.env_origins
 
 
 def gripper_state(
@@ -171,25 +172,30 @@ def reset_root_state_uniform(
 ) -> None:
     """Reset a rigid object's root state with uniform random pose + velocity.
 
-    pose_range values are treated as ABSOLUTE world coordinates (not offsets).
-    Default quaternion and zero velocities are used.
+    pose_range values are LOCAL offsets relative to each env's origin.
+    write_root_state_to_sim expects world-frame positions, so we add env_origins.
     """
     asset = env.scene[asset_cfg.name]
+    origins = env.scene.env_origins[env_ids]  # (N, 3) world-frame env origins
 
-    # Build position tensor from scratch using absolute ranges
-    pos = torch.zeros(len(env_ids), 3, device=env.device)
+    # Build local position, then convert to world frame by adding env_origins
+    local_pos = torch.zeros(len(env_ids), 3, device=env.device)
     if "x" in pose_range:
-        pos[:, 0] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["x"])
+        local_pos[:, 0] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["x"])
     else:
-        pos[:, 0] = asset.data.root_pos_w[env_ids, 0]
+        # Keep current local offset: world_pos - origin
+        local_pos[:, 0] = asset.data.root_pos_w[env_ids, 0] - origins[:, 0]
     if "y" in pose_range:
-        pos[:, 1] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["y"])
+        local_pos[:, 1] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["y"])
     else:
-        pos[:, 1] = asset.data.root_pos_w[env_ids, 1]
+        local_pos[:, 1] = asset.data.root_pos_w[env_ids, 1] - origins[:, 1]
     if "z" in pose_range:
-        pos[:, 2] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["z"])
+        local_pos[:, 2] = torch.empty(len(env_ids), device=env.device).uniform_(*pose_range["z"])
     else:
-        pos[:, 2] = asset.data.root_pos_w[env_ids, 2]
+        local_pos[:, 2] = asset.data.root_pos_w[env_ids, 2] - origins[:, 2]
+
+    # Convert local → world frame
+    pos = local_pos + origins
 
     # Orientation — use default identity quaternion
     quat = torch.tensor([1.0, 0.0, 0.0, 0.0], device=env.device).repeat(len(env_ids), 1)
@@ -252,7 +258,8 @@ def reach_reward(
     # Distances
     ee_to_obj = torch.norm(ee_pos - obj_pos, dim=1)
 
-    # Basket centre (from env_cfg: basket at (0.6, 0.0, 0.80))
+    # Basket centre in local env frame (env_cfg: basket init pos = (0.6, 0.0, 0.80))
+    # obj_pos is already in local frame, so basket_center must also be local (same for all envs)
     basket_center = torch.tensor([0.6, 0.0, 0.80], device=env.device, dtype=torch.float32)
     obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
 
