@@ -139,12 +139,16 @@ class ActionsCfg:
 class ObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
-        ee_pos = ObsTerm(func=mdp.ee_position, params={"link_name": "wrist_3_link"})
+        # Pre-scaled observations — avoids EmpiricalNormalization collapse.
+        # EE pos: raw ~[-0.5,1.5]m → scaled by /1.5 → ~[-0.33, 1.0]
+        # Object pos: raw ~[0.25,0.45]m local → kept as-is
+        # Gripper: raw [0, 0.04]m → scaled ×25 → [0, 1.0]
+        ee_pos = ObsTerm(func=mdp.ee_position_scaled, params={"link_name": "wrist_3_link"})
         object_pos = ObsTerm(func=mdp.object_position)
-        gripper_state = ObsTerm(func=mdp.gripper_state)
+        gripper_state = ObsTerm(func=mdp.gripper_state_scaled)
 
         def __post_init__(self):
-            self.enable_corruption = True
+            self.enable_corruption = False
             self.concatenate_terms = True
 
     policy: PolicyCfg = PolicyCfg()
