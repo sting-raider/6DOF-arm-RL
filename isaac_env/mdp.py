@@ -105,6 +105,23 @@ def gripper_state(
 
 
 # =============================================================================
+# SCALED OBSERVATIONS (for use when obs_normalization is disabled)
+# =============================================================================
+
+def ee_position_scaled(env, link_name="wrist_3_link"):
+    """EE position scaled to ~[-1, 1]."""
+    return ee_position(env, link_name) / 1.5
+
+def object_position_scaled(env, object_name="object"):
+    """Object position scaled to ~[0, 1]."""
+    return object_position(env, object_name) / 1.0
+
+def gripper_state_scaled(env, asset_name="robot"):
+    """Gripper state scaled to [0, 1]."""
+    return gripper_state(env, asset_name) * 25.0
+
+
+# =============================================================================
 # TERMINATION TERMS
 # =============================================================================
 
