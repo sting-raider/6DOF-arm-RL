@@ -58,12 +58,12 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
-                # Arm pose: face the table (+X), arm slightly lifted
+                # Arm pose: reaching toward the table (+X, z~0.85)
                 "shoulder_pan_joint": 0.0,
-                "shoulder_lift_joint": -1.0,
-                "elbow_joint": 1.5,
-                "wrist_1_joint": -1.0,
-                "wrist_2_joint": -1.0,
+                "shoulder_lift_joint": -1.4,
+                "elbow_joint": 1.7,
+                "wrist_1_joint": -0.8,
+                "wrist_2_joint": -0.5,
                 "wrist_3_joint": 0.0,
                 # Start gripper open
                 "finger_joint": 0.0,
@@ -130,7 +130,7 @@ class ActionsCfg:
             "wrist_2_joint",
             "wrist_3_joint",
         ],
-        scale=0.05,
+        scale=0.07,
         use_zero_offset=True,
     )
 
