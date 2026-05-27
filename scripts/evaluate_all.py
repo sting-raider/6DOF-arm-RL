@@ -25,7 +25,7 @@ PHASES = [
     {
         "id": 0,
         "name": "REACH",
-        "model": "models/phase_0/best_model",
+        "model": "models/isaac/phase_0/model.pt",
         "episodes": 10,
         "disable_dr": True,
         "description": "Phase 0 — Reach target (no DR)",
@@ -33,7 +33,7 @@ PHASES = [
     {
         "id": 1,
         "name": "GRASP",
-        "model": "models/phase_1/best_model",
+        "model": "models/isaac/phase_1/model.pt",
         "episodes": 10,
         "disable_dr": True,
         "description": "Phase 1 — Reach + Grasp (no DR)",
@@ -41,7 +41,7 @@ PHASES = [
     {
         "id": 2,
         "name": "PLACE",
-        "model": "models/phase_2/best_model",
+        "model": "models/isaac/phase_2/model.pt",
         "episodes": 20,
         "disable_dr": False,
         "description": "Phase 2 — Full pick-and-place (DR enabled)",
@@ -57,7 +57,7 @@ def build_command(phase_cfg):
 
     cmd += [
         sys.executable or "python",
-        "scripts/evaluate_comprehensive.py",
+        "scripts/evaluate_isaac.py",
         "--model", phase_cfg["model"],
         "--phase", str(phase_cfg["id"]),
         "--episodes", str(phase_cfg["episodes"]),

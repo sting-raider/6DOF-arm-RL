@@ -18,60 +18,6 @@ if TYPE_CHECKING:
 # ACTION TERMS
 # =============================================================================
 
-def joint_pos_delta_action(
-    env: ManagerBasedRLEnv,
-    asset_name: str = "robot",
-    scale: float = 0.1,
-) -> torch.Tensor:
-    """Apply delta joint position commands (5 arm joints).
-
-    Maps actions in [-1, 1] to position deltas scaled by `scale` radians.
-    The 6th action dimension (gripper) is handled by gripper_action.
-
-    Returns the clipped target joint positions (used by the action manager).
-    """
-    asset = env.scene[asset_name]
-    # Current joint positions (first 5 arm joints)
-    current_pos = asset.data.joint_pos[:, :5]
-    # Action from policy (first 5 dims)
-    action = env.action_manager.action[:, :5]
-    # Target = current + scaled delta
-    target_pos = current_pos + action * scale
-    # Clip to joint limits
-    limits = asset.data.joint_limits[:, :5, :]
-    target_pos = torch.clamp(target_pos, limits[..., 0], limits[..., 1])
-    return target_pos
-
-
-def gripper_action(
-    env: ManagerBasedRLEnv,
-    asset_name: str = "robot",
-    open_pos: float = 0.04,
-    closed_pos: float = 0.0,
-    velocity: float = 0.1,
-) -> torch.Tensor:
-    """Binary gripper action from the 6th action dimension.
-
-    Positive action (>0) → close gripper to `closed_pos`.
-    Negative action (≤0) → open gripper to `open_pos`.
-    Uses direct position control with a fixed velocity.
-    """
-    asset = env.scene[asset_name]
-    action = env.action_manager.action[:, 5:6]  # (num_envs, 1)
-
-    # Target position: binary open/close based on action sign
-    target = torch.where(action > 0, closed_pos, open_pos)
-
-    # Get current gripper joint position (last DOF)
-    current = asset.data.joint_pos[:, -1:]
-
-    # Move toward target at fixed velocity per step
-    step_max = velocity * env.step_dt
-    delta = torch.clamp(target - current, -step_max, step_max)
-
-    return current + delta
-
-
 # =============================================================================
 # OBSERVATION TERMS
 # =============================================================================
@@ -111,8 +57,10 @@ def gripper_state(
     env: ManagerBasedRLEnv,
     asset_name: str = "robot",
 ) -> torch.Tensor:
-    """Gripper open/close state as a single float per env [0=open, 0.04=closed]."""
-    return env.scene[asset_name].data.joint_pos[:, -1:]  # last DOF
+    """Gripper open/close state as a single float per env [0=open, 0.785=closed]."""
+    robot = env.scene[asset_name]
+    finger_idx = robot.data.joint_names.index("finger_joint")
+    return robot.data.joint_pos[:, finger_idx : finger_idx + 1]
 
 
 # =============================================================================
@@ -129,7 +77,7 @@ def object_position_scaled(env, object_name="object"):
 
 def gripper_state_scaled(env, asset_name="robot"):
     """Gripper state scaled to [0, 1]."""
-    return gripper_state(env, asset_name) * 25.0
+    return gripper_state(env, asset_name) / 0.785398163
 
 
 # =============================================================================
@@ -261,17 +209,18 @@ def reach_reward(
 
     phase = env.cfg.curriculum_phase
 
-    # DEBUG: print first env's values on first call
-    if not hasattr(reach_reward, '_debug_printed'):
-        reach_reward._debug_printed = True
-
     # Distances
     ee_to_obj = torch.norm(ee_pos - obj_pos, dim=1)
 
-    # Basket centre in local env frame (env_cfg: basket init pos = (0.6, 0.0, 0.80))
+    # Basket centre in local env frame (env_cfg: basket init pos = (0.6, 0.0, 0.85))
     # obj_pos is already in local frame, so basket_center must also be local (same for all envs)
-    basket_center = torch.tensor([0.6, 0.0, 0.80], device=env.device, dtype=torch.float32)
+    basket_center = torch.tensor([0.6, 0.0, 0.85], device=env.device, dtype=torch.float32)
     obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
+
+    # Unified finger joint index and closedness
+    finger_idx = robot.data.joint_names.index("finger_joint")
+    gripper_joint_pos = robot.data.joint_pos[:, finger_idx]
+    closedness = torch.clamp(gripper_joint_pos / 0.785398163, 0.0, 1.0)
 
     if phase == 0:
         # ── REACH: distance from EE to object ──
@@ -280,9 +229,6 @@ def reach_reward(
     elif phase == 1:
         # ── GRASP: reach + gripper-closed bonus ──
         reach = torch.exp(-ee_to_obj / std)
-        gripper_joint_pos = robot.data.joint_pos[:, -1]  # last DOF
-        # Gripper is "closed" near object → bonus scales with how closed
-        closedness = torch.clamp(gripper_joint_pos / 0.04, 0.0, 1.0)
         # Bonus only when EE is close to object (within ~3× std)
         near_mask = torch.exp(-ee_to_obj / (std * 3.0))
         grasp_bonus = 0.5 * closedness * near_mask
@@ -291,8 +237,6 @@ def reach_reward(
     elif phase == 2:
         # ── PLACE: Phase 1 reach+grasp + basket bonus ──
         reach = torch.exp(-ee_to_obj / std)
-        gripper_joint_pos = robot.data.joint_pos[:, -1]
-        closedness = torch.clamp(gripper_joint_pos / 0.04, 0.0, 1.0)
         near_mask = torch.exp(-ee_to_obj / (std * 3.0))
         grasp_bonus = 0.5 * closedness * near_mask
         # Basket bonus: reward object being close to basket

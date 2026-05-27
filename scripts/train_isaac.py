@@ -19,7 +19,6 @@ import argparse
 import os
 import sys
 import time
-from datetime import datetime
 
 # Insert project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,7 +42,6 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 """Rest everything follows."""
-import gymnasium as gym
 import torch
 
 from isaaclab.envs import ManagerBasedRLEnv
@@ -148,13 +146,13 @@ def main():
     # ── Create runner ────────────────────────────────────────────────────
     runner = OnPolicyRunner(env, ppo_cfg, log_dir=log_dir, device=device)
 
-    # ── Zero-init critic output layer ────────────────────────────────────
+    # ── Scaled-down/near-zero critic initialization ──────────────────────
     # PyTorch default init gives critic output ≈ ±10. With bootstrapping
     # (time_out=True), this amplifies immediately: V≈10 → returns≈10×150 →
-    # value_loss starts at 10M. Zero-init makes V(s)≈0 so returns=reward≈0.1
+    # value_loss starts at 10M. Near-zero initialization makes V(s)≈0 so returns=reward≈0.1
     runner.alg.critic.mlp[-1].weight.data.mul_(0.01)
     runner.alg.critic.mlp[-1].bias.data.zero_()
-    print("  Zero-initialized critic output layer (prevents bootstrap amplification)")
+    print("  Near-zero initialized critic output layer (prevents bootstrap amplification)")
 
 
 

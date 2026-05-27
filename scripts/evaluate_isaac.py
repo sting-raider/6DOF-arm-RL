@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Isaac Lab evaluation script — runs N episodes and reports success metrics.
 
-Uses obs_normalization=False for eval (loads trained weights with strict=False
-to skip normalizer stats). Training uses normalization; eval uses raw observations.
+Uses obs_normalization=True for eval, loading both trained policy weights and
+running observation normalizer statistics.
 """
 import argparse, os, sys, time
 import numpy as np
@@ -69,23 +69,13 @@ def main():
     runner.load(args_cli.model)  # loads training normalizer stats
     print("  Model loaded.")
 
-    # ── Warmup: adapt normalizer to eval environment ─────────────────────
-    print("  Warming up normalizer for eval environment...")
-    obs_dict = env.get_observations()
-    for _ in range(20):  # 20 steps to update running stats
-        with torch.no_grad():
-            actions = runner.alg.actor(obs_dict, stochastic_output=False)
-        obs_dict, _, _, _ = env.step(actions)
-    # Reset env to start eval from clean state
-    if hasattr(env, 'reset'):
-        env.reset()
-    print("  Warmup complete.\n")
+
 
     # Cache scene references for real (unnormalized) position queries
     robot = raw_env.scene["robot"]
     ee_idx = robot.data.body_names.index("wrist_3_link")
     obj = raw_env.scene["object"]
-    basket_center = torch.tensor([0.6, 0.0, 0.80], device=device, dtype=torch.float32)
+    basket_center = torch.tensor([0.6, 0.0, 0.85], device=device, dtype=torch.float32)
 
     successes = {"reach": 0, "grasp": 0, "place": 0, "total_eps": 0}
     rewards = []
@@ -106,7 +96,8 @@ def main():
     start = time.time()
 
     while episodes_done < episodes_to_run:
-        actions = runner.alg.actor(obs, stochastic_output=False)
+        with torch.no_grad():
+            actions = runner.alg.actor(obs, stochastic_output=False)
         obs, rew, dones, infos = env.step(actions)
 
         ep_reward += rew
@@ -114,15 +105,18 @@ def main():
 
         # Get REAL (unnormalized) positions from the Isaac Lab scene
         ee_pos = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
-        obj_pos = obj.data.root_pos_w - raw_env.scene.env_origins
-        grip_state = robot.data.joint_pos[:, -1]
+        obj_pos = obj.data.root_pos_w[:, :3] - raw_env.scene.env_origins
+        
+        # Unify gripper state to finger_joint position
+        finger_idx = robot.data.joint_names.index("finger_joint")
+        grip_state = robot.data.joint_pos[:, finger_idx]
 
         ee_to_obj = torch.norm(ee_pos - obj_pos, dim=1)
         obj_height = obj_pos[:, 2]
         obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
 
         ep_reach_success = ep_reach_success | (ee_to_obj < 0.05)
-        ep_grasp_success = ep_grasp_success | ((grip_state > 0.02) & (obj_height > 0.88))
+        ep_grasp_success = ep_grasp_success | ((grip_state > 0.40) & (obj_height > 0.88))
         ep_place_success = ep_place_success | (obj_to_basket < 0.10)
 
         done_mask = dones > 0.5

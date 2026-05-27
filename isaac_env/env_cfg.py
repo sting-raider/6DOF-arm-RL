@@ -55,7 +55,7 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = UR10e_ROBOTIQ_2F_85_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.0),
+            pos=(0.0, 0.0, 0.80),
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
                 # Arm pose: face the table (+X), arm slightly lifted
@@ -296,3 +296,12 @@ class PickPlaceEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
+
+        # Handle HERMES_DISABLE_DR to disable object pose randomization for deterministic testing
+        import os
+        if os.environ.get("HERMES_DISABLE_DR") == "1":
+            self.events.reset_object.params["pose_range"] = {
+                "x": (0.35, 0.35),
+                "y": (0.0, 0.0),
+                "z": (0.85, 0.85),
+            }

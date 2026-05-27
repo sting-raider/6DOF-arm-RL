@@ -1,41 +1,31 @@
-# 6-DOF Arm Pick-and-Place — Task Tracker
+# 6-DOF Arm Pick-and-Place — Implementation Task Tracker
 
-> **Status**: PPO Training Stabilization milestones achieved. Sanity check run of 150 iterations succeeded (Value loss: 0.0130).
-> **Current**: Retraining Phase 0 (REACH) in NVIDIA Isaac Lab at 4096 environments with 29D state observability and running normalizers.
+## 1. Environment Config & Package Structure ✅ COMPLETE
+- [x] Implement `HERMES_DISABLE_DR` in `PickPlaceEnvCfg.__post_init__` inside `env_cfg.py`
+- [x] Verify `isaac_env/__init__.py` imports and package structure
 
-## Phase 1: Cleanup & Transition ✅ COMPLETE
+## 2. MDP Definitions & Gripper Semantics ✅ COMPLETE
+- [x] Update `gripper_state()` in `mdp.py` to dynamically index `"finger_joint"`
+- [x] Update `gripper_state_scaled()` in `mdp.py` to scale `"finger_joint"` to `[0, 1]`
+- [x] Update `reach_reward()` in `mdp.py` to use `"finger_joint"` closedness
+- [x] Delete unused `joint_pos_delta_action()` and `gripper_action()` in `mdp.py`
+- [x] Delete unused `_debug_printed` latch variables in `mdp.py`
+- [x] Align hardcoded basket target center in `mdp.py` to `[0.6, 0.0, 0.85]`
 
-- [x] Project cleaned up, MuJoCo training artifacts archived
-- [x] Isaac Lab environment verified as primary simulation backend
-- [x] Resolved NGC API key hardcoding in `setup_cloud.sh`
-- [x] Configured 29D complete state observability in `env_cfg.py`
+## 3. Training Script Cleanup ✅ COMPLETE
+- [x] Clean up unused imports (`gymnasium`, `datetime`) in `train_isaac.py`
+- [x] Update misleading "zero-initialized critic" comments in `train_isaac.py`
 
-## Phase 2: Isaac Lab Retraining — IN PROGRESS
+## 4. Evaluators Synchronization ✅ COMPLETE
+- [x] Sync header comments and `obs_normalization: True` settings in `evaluate_isaac.py`
+- [x] Remove 20-step normalizer warmup block in `evaluate_isaac.py`
+- [x] Wrap rollout inference loop with `with torch.no_grad():` in `evaluate_isaac.py`
+- [x] Align basket center coordinate in `evaluate_isaac.py` to `[0.6, 0.0, 0.85]`
+- [x] Align grasp success detection to `"finger_joint"` position (>0.40 rad) in `evaluate_isaac.py`
+- [x] Point `PHASES` models to `models/isaac/phase_{phase}/model.pt` in `evaluate_all.py`
+- [x] Point called entrypoint to `scripts/evaluate_isaac.py` in `evaluate_all.py`
 
-All curriculum phases retrained from scratch on Isaac Lab with stable PPO configs.
-
-### Phase 0 — Reach (TARGET: $\ge 90\%$ reach success)
-- [x] Succeeded in PPO normalizer sanity check (512 envs, 150 iterations; value loss: 0.0130, reward: 0.3243)
-- [x] Resolved Robotiq multi-joint articulation action mapping mismatch (6 PhysX joints)
-- [/] Train full-scale REACH policy at 4096 envs for 1500 iterations (v14 active, task-1794)
-- [ ] Evaluate success rate via coordinate-aligned tracking script
-- [ ] **Status: IN PROGRESS (v14 active)**
-
-### Phase 1 — Grasp (TARGET: $\ge 80\%$ grasp success)
-- [ ] Train grasp policy, warm-started from Phase 0 best checkpoint
-- [ ] Target: 1500 iterations at 4096 envs
-- [ ] **Status: QUEUED**
-
-### Phase 2 — Place (TARGET: $\ge 80\%$ place success)
-- [ ] Train place policy, warm-started from Phase 1 best checkpoint
-- [ ] Target: 1500 iterations at 4096 envs
-- [ ] **Status: QUEUED**
-
-## Key Metrics Dashboard
-
-| Training Target | Isaac Lab Goal | Sanity Check (PPO v14) |
-|---|---|---|
-| Parallel Envs | 4,096 | 512 |
-| Mean Value Loss | < 1.0 | **0.0130** (Super Stable) |
-| Reach Reward | Dense Potential | **0.3243** (Climbing) |
-| Physics Jitter | Resolved | Mimic joints filtered out |
+## 5. Verification & Testing ⏳ QUEUED
+- [ ] Run evaluation of Phase 0 with `HERMES_DISABLE_DR=1`
+- [ ] Run batch evaluation check with `evaluate_all.py --dry-run`
+- [ ] Push clean changes to GitHub repository
