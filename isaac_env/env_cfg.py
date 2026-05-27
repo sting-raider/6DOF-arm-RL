@@ -3,17 +3,14 @@
 
 Three-phase curriculum:
   Phase 0 (REACH): Move end-effector to object
-  Phase 1 (GRASP): Reach, grasp, and lift object  
+  Phase 1 (GRASP): Reach, grasp, and lift object
   Phase 2 (PLACE): Full pick-and-place into basket
 """
-
-from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import (
-    ActionTermCfg as ActionTerm,
     EventTermCfg as EventTerm,
     ObservationGroupCfg as ObsGroup,
     ObservationTermCfg as ObsTerm,
@@ -23,18 +20,17 @@ from isaaclab.managers import (
 )
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from isaaclab_assets.robots.universal_robots import UR10e_ROBOTIQ_2F_85_CFG
 
 import isaac_env.mdp as mdp
 import isaaclab.envs.mdp as isaac_mdp
-
+from isaaclab.envs.mdp import RelativeJointPositionActionCfg, BinaryJointPositionActionCfg
 
 
 @configclass
 class PickPlaceSceneCfg(InteractiveSceneCfg):
-    """Scene: ground, table, UR10e+Robotiq, object, basket, lights."""
+    """Scene: ground, table, UR10e+Robotiq, object, basket target, lights."""
 
     # Ground
     ground = AssetBaseCfg(
@@ -62,13 +58,22 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
             pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
-                # Override default pose: face the table (+X), arm slightly lifted
+                # Arm pose: face the table (+X), arm slightly lifted
                 "shoulder_pan_joint": 0.0,
                 "shoulder_lift_joint": -1.0,
                 "elbow_joint": 1.5,
                 "wrist_1_joint": -1.0,
                 "wrist_2_joint": -1.0,
                 "wrist_3_joint": 0.0,
+                # Start gripper open
+                "finger_joint": 0.0,
+                "right_outer_knuckle_joint": 0.0,
+                "right_outer_finger_joint": 0.0,
+                "right_inner_finger_joint": 0.0,
+                "right_inner_finger_knuckle_joint": 0.0,
+                "left_outer_finger_joint": 0.0,
+                "left_inner_finger_knuckle_joint": 0.0,
+                "left_inner_finger_joint": 0.0,
             },
         ),
     )
@@ -89,17 +94,20 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    # Basket (open-top box for placing)
+    # Basket target.
+    # A single CuboidCfg is a solid box, not an open-top basket.
+    # Treated as a visual target proxy placed on the table.
     basket = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Basket",
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.6, 0.0, 0.80),
+            pos=(0.6, 0.0, 0.85),  # flush on top of the table: 0.81 + 0.04
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         spawn=sim_utils.CuboidCfg(
             size=(0.15, 0.15, 0.08),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.3, 0.1)),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
         ),
     )
 
@@ -109,8 +117,6 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=2500.0),
     )
 
-
-from isaaclab.envs.mdp import RelativeJointPositionActionCfg, BinaryJointPositionActionCfg
 
 @configclass
 class ActionsCfg:
@@ -129,11 +135,41 @@ class ActionsCfg:
         scale=0.05,
         use_zero_offset=True,
     )
+
+    # Robotiq 2F-85:
+    # Explicitly map the dependent joints for more reliable open/close behavior.
     gripper_action = BinaryJointPositionActionCfg(
         asset_name="robot",
-        joint_names=["finger_joint"],
-        open_command_expr={"finger_joint": 0.0},
-        close_command_expr={"finger_joint": 0.04},
+        joint_names=[
+            "finger_joint",
+            "right_outer_knuckle_joint",
+            "right_outer_finger_joint",
+            "right_inner_finger_joint",
+            "right_inner_finger_knuckle_joint",
+            "left_outer_finger_joint",
+            "left_inner_finger_knuckle_joint",
+            "left_inner_finger_joint",
+        ],
+        open_command_expr={
+            "finger_joint": 0.0,
+            "right_outer_knuckle_joint": 0.0,
+            "right_outer_finger_joint": 0.0,
+            "right_inner_finger_joint": 0.0,
+            "right_inner_finger_knuckle_joint": 0.0,
+            "left_outer_finger_joint": 0.0,
+            "left_inner_finger_knuckle_joint": 0.0,
+            "left_inner_finger_joint": 0.0,
+        },
+        close_command_expr={
+            "finger_joint": 0.785398163,
+            "right_outer_knuckle_joint": 0.785398163,
+            "right_outer_finger_joint": 0.0,
+            "right_inner_finger_joint": 0.785398163,
+            "right_inner_finger_knuckle_joint": -0.785398163,
+            "left_outer_finger_joint": 0.0,
+            "left_inner_finger_knuckle_joint": -0.785398163,
+            "left_inner_finger_joint": -0.785398163,
+        },
     )
 
 
@@ -144,39 +180,47 @@ class ObservationsCfg:
         # Joint states (6 active arm joints)
         joint_pos = ObsTerm(
             func=isaac_mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg(
-                "robot",
-                joint_names=[
-                    "shoulder_pan_joint",
-                    "shoulder_lift_joint",
-                    "elbow_joint",
-                    "wrist_1_joint",
-                    "wrist_2_joint",
-                    "wrist_3_joint",
-                ]
-            )}
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=[
+                        "shoulder_pan_joint",
+                        "shoulder_lift_joint",
+                        "elbow_joint",
+                        "wrist_1_joint",
+                        "wrist_2_joint",
+                        "wrist_3_joint",
+                    ],
+                )
+            },
         )
+
         joint_vel = ObsTerm(
             func=isaac_mdp.joint_vel_rel,
-            params={"asset_cfg": SceneEntityCfg(
-                "robot",
-                joint_names=[
-                    "shoulder_pan_joint",
-                    "shoulder_lift_joint",
-                    "elbow_joint",
-                    "wrist_1_joint",
-                    "wrist_2_joint",
-                    "wrist_3_joint",
-                ]
-            )}
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=[
+                        "shoulder_pan_joint",
+                        "shoulder_lift_joint",
+                        "elbow_joint",
+                        "wrist_1_joint",
+                        "wrist_2_joint",
+                        "wrist_3_joint",
+                    ],
+                )
+            },
         )
+
         # End effector position and gripper state
         ee_pos = ObsTerm(func=mdp.ee_position_scaled, params={"link_name": "wrist_3_link"})
         gripper_state = ObsTerm(func=mdp.gripper_state_scaled)
+
         # Object position and relative distance vector
         object_pos = ObsTerm(func=mdp.object_position)
         relative_pos = ObsTerm(func=mdp.relative_position)
-        # Last actions (7 control deltas)
+
+        # Last actions (6 arm + 1 gripper command from the manager action interface)
         actions = ObsTerm(func=isaac_mdp.last_action)
 
         def __post_init__(self):
@@ -190,39 +234,43 @@ class ObservationsCfg:
 class RewardsCfg:
     """Reward terms — positive shaping throughout.
 
-    ``reach_reward`` reads ``env.cfg.curriculum_phase`` at runtime and dispatches
-    REACH / GRASP / PLACE rewards automatically — no phase-switching needed in config.
+    `reach_reward` reads `env.cfg.curriculum_phase` at runtime and dispatches
+    REACH / GRASP / PLACE rewards automatically.
     """
 
     reach = RewTerm(func=mdp.reach_reward, weight=1.0)
-    # NOTE: action_penalty omitted in Phase 0 — raw pre-scale network outputs
-    # cause return explosions if the critic ever destabilizes temporarily.
-    # Add back in Phase 1+: action_penalty = RewTerm(func=mdp.action_penalty_l2, weight=-0.001)
+    # Add back in later phases if needed:
+    # action_penalty = RewTerm(func=mdp.action_penalty_l2, weight=-0.001)
 
 
 @configclass
 class TerminationsCfg:
     # time_out=True: standard bootstrapping for non-terminal timeouts.
-    # Safe here because without action_penalty, returns stay bounded [0, ~7].
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    # object_fell uses 0.5 threshold: object must fall below the table surface to trigger.
-    # Higher thresholds cause false positives due to physics contact initialization.
+
+    # Object must fall below the table surface to trigger cleanly.
     object_fell = DoneTerm(func=mdp.object_fell, params={"minimum_height": 0.5})
 
 
 @configclass
 class EventCfg:
     """Domain randomization events."""
+
     reset_robot_joints = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={"position_range": (0.0, 0.0), "velocity_range": (0.0, 0.0)},
     )
+
     reset_object = EventTerm(
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (0.25, 0.45), "y": (-0.15, 0.15)},
+            "pose_range": {
+                "x": (0.25, 0.45),
+                "y": (-0.15, 0.15),
+                "z": (0.85, 0.85),  # Ensure the object always resets back to table-top height
+            },
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("object"),
         },
@@ -246,13 +294,13 @@ class PickPlaceEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         self.decimation = 4
         self.episode_length_s = 10.0
+
         self.sim.dt = 1.0 / 60.0
         self.sim.render_interval = self.decimation
         self.viewer.eye = (1.5, 1.5, 1.5)
 
-        # ── Stable PhysX Contacts (Standard for Isaac Lab Manipulation Tasks) ──
+        # Stable PhysX contacts
         self.sim.physx.bounce_threshold_velocity = 0.2
-        self.sim.physx.bounce_threshold_velocity = 0.01
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
