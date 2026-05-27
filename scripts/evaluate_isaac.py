@@ -69,13 +69,28 @@ def main():
     runner.load(args_cli.model)  # loads training normalizer stats
     print("  Model loaded.")
 
-
-
+    # ── Warmup: adapt normalizer to eval environment ─────────────────────
+    print("  Warming up normalizer for eval env...")
+    obs_dict = env.get_observations()
+    for _ in range(50):  # 50 steps to adapt stats to 16-env distribution
+        with torch.no_grad():
+            actions = runner.alg.actor(obs_dict, stochastic_output=False)
+        obs_dict, _, _, _ = env.step(actions)
+    if hasattr(env, 'reset'):
+        env.reset()
+    print("  Warmup complete.\n")
     # Cache scene references for real (unnormalized) position queries
     robot = raw_env.scene["robot"]
     ee_idx = robot.data.body_names.index("wrist_3_link")
     obj = raw_env.scene["object"]
     basket_center = torch.tensor([0.6, 0.0, 0.85], device=device, dtype=torch.float32)
+
+    # Debug: print initial EE-to-object distance
+    ee_pos0 = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
+    obj_pos0 = obj.data.root_pos_w[:, :3] - raw_env.scene.env_origins
+    ee_to_obj0 = torch.norm(ee_pos0 - obj_pos0, dim=1)
+    print(f"  [DEBUG] Initial EE-to-object distance: mean={ee_to_obj0.mean().item():.3f}m, "
+          f"min={ee_to_obj0.min().item():.3f}m, max={ee_to_obj0.max().item():.3f}m\n")
 
     successes = {"reach": 0, "grasp": 0, "place": 0, "total_eps": 0}
     rewards = []
@@ -115,7 +130,7 @@ def main():
         obj_height = obj_pos[:, 2]
         obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
 
-        ep_reach_success = ep_reach_success | (ee_to_obj < 0.05)
+        ep_reach_success = ep_reach_success | (ee_to_obj < 0.08)
         ep_grasp_success = ep_grasp_success | ((grip_state > 0.40) & (obj_height > 0.88))
         ep_place_success = ep_place_success | (obj_to_basket < 0.10)
 

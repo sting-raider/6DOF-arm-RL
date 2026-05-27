@@ -55,7 +55,7 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = UR10e_ROBOTIQ_2F_85_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.80),
+            pos=(0.0, 0.0, 0.0),
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
                 # Arm pose: face the table (+X), arm slightly lifted
