@@ -293,8 +293,8 @@ class PickPlaceEnvCfg(ManagerBasedRLEnvCfg):
 
         # Stable PhysX contacts
         self.sim.physx.bounce_threshold_velocity = 0.2
-        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
-        self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
+        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 8  # 8M for 8192 envs
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 32 * 1024  # bumped for 8192 envs
         self.sim.physx.friction_correlation_distance = 0.00625
 
         # Handle HERMES_DISABLE_DR to disable object pose randomization for deterministic testing
