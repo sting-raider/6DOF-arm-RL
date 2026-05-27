@@ -55,15 +55,15 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
     robot: ArticulationCfg = UR10e_ROBOTIQ_2F_85_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
         init_state=ArticulationCfg.InitialStateCfg(
-            pos=(0.0, 0.0, 0.0),
+            pos=(0.0, 0.0, 0.80),  # Mount robot on a pedestal level with the table
             rot=(1.0, 0.0, 0.0, 0.0),
             joint_pos={
-                # Arm pose: reaching toward the table (+X, z~0.85)
+                # Arm pose: natural starting pose hovering over the table
                 "shoulder_pan_joint": 0.0,
-                "shoulder_lift_joint": -1.4,
-                "elbow_joint": 1.7,
-                "wrist_1_joint": -0.8,
-                "wrist_2_joint": -0.5,
+                "shoulder_lift_joint": -1.57,  # -90 deg, pointing forward/up
+                "elbow_joint": 1.57,           # 90 deg, pointing down toward table
+                "wrist_1_joint": -1.57,        # -90 deg, wrist level
+                "wrist_2_joint": -1.57,        # -90 deg, pointing forward
                 "wrist_3_joint": 0.0,
                 # Start gripper open
                 "finger_joint": 0.0,
