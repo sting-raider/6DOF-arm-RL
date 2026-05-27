@@ -60,10 +60,10 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
             joint_pos={
                 # Arm pose: natural starting pose hovering over the table
                 "shoulder_pan_joint": 0.0,
-                "shoulder_lift_joint": -1.57,  # -90 deg, pointing forward/up
-                "elbow_joint": 1.57,           # 90 deg, pointing down toward table
-                "wrist_1_joint": -1.57,        # -90 deg, wrist level
-                "wrist_2_joint": -1.57,        # -90 deg, pointing forward
+                "shoulder_lift_joint": -1.0,   # pointing slightly up/forward
+                "elbow_joint": 1.5,            # pointing down to table
+                "wrist_1_joint": -0.5,         # wrist leveling out
+                "wrist_2_joint": -1.57,        # pointing forward
                 "wrist_3_joint": 0.0,
                 # Start gripper open
                 "finger_joint": 0.0,
@@ -335,8 +335,8 @@ class PickPlaceEnvCfg(ManagerBasedRLEnvCfg):
 
         # Stable PhysX contacts
         self.sim.physx.bounce_threshold_velocity = 0.2
-        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 8  # 8M for 8192 envs
-        self.sim.physx.gpu_total_aggregate_pairs_capacity = 32 * 1024  # bumped for 8192 envs
+        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 16  # bumped to 16M
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 128 * 1024  # bumped to 128K for hollow basket
         self.sim.physx.friction_correlation_distance = 0.00625
 
         # Handle HERMES_DISABLE_DR to disable object pose randomization for deterministic testing
