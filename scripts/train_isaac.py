@@ -98,10 +98,10 @@ def main():
             "num_learning_epochs": 5,
             "num_mini_batches": 4,
             "learning_rate": 3e-4,
-            "gamma": 0.99,
+            "gamma": 0.95,       # Reduced from 0.99 → smaller returns → stable critic
             "lam": 0.95,
             "clip_param": 0.2,
-            "value_loss_coef": 1.0,
+            "value_loss_coef": 0.5,  # Dampen critic gradient updates
             "desired_kl": 0.01,
             "entropy_coef": 0.01,
             "max_grad_norm": 1.0,

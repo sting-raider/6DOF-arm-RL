@@ -168,7 +168,10 @@ class RewardsCfg:
 
 @configclass
 class TerminationsCfg:
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    # time_out=False: treat episode timeouts as terminal (V=0 at end), NOT
+    # bootstrapped. With time_out=True and 100% timeout rate, PPO adds gamma*V
+    # to EVERY reward, creating a value-inflation feedback loop that diverges.
+    time_out = DoneTerm(func=mdp.time_out, time_out=False)
     # object_fell uses -1.5 threshold: object must fall well below table to trigger.
     # Higher thresholds cause false positives due to physics contact initialization.
     object_fell = DoneTerm(func=mdp.object_fell, params={"minimum_height": -1.5})
@@ -209,7 +212,7 @@ class PickPlaceEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         self.decimation = 4
-        self.episode_length_s = 10.0
+        self.episode_length_s = 8.0  # shorter episodes = smaller discounted returns = stable value
         self.sim.dt = 1.0 / 60.0
         self.sim.render_interval = self.decimation
         self.viewer.eye = (1.5, 1.5, 1.5)
