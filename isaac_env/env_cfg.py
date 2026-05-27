@@ -46,7 +46,7 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
     # Table — kinematic rigid body with collision
     table = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.0)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, 0.80)),
         spawn=sim_utils.CuboidCfg(
             size=(0.6, 0.4, 0.02),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.7, 0.7, 0.7)),
@@ -205,9 +205,9 @@ class TerminationsCfg:
     # time_out=True: standard bootstrapping for non-terminal timeouts.
     # Safe here because without action_penalty, returns stay bounded [0, ~7].
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    # object_fell uses -1.5 threshold: object must fall well below table to trigger.
+    # object_fell uses 0.5 threshold: object must fall below the table surface to trigger.
     # Higher thresholds cause false positives due to physics contact initialization.
-    object_fell = DoneTerm(func=mdp.object_fell, params={"minimum_height": -1.5})
+    object_fell = DoneTerm(func=mdp.object_fell, params={"minimum_height": 0.5})
 
 
 @configclass
