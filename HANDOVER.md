@@ -102,6 +102,6 @@ python scripts/evaluate_isaac.py --phase 0 --model models/isaac/phase_0/model.pt
 ---
 
 ## 📈 Current Training Progress
-
+ 
 * **Sanity Check (512 envs)**: Completed successfully in 150 iterations. `Mean value loss` stabilized at **`0.0130`** and `Episode_Reward/reach` climbed consistently to **`0.3243`**.
-* **Full retraining (4096 envs)**: **Currently running** (`task-1628`). Iteration 26 showed extremely stable value loss (`0.0179`) and climbing reach reward (`0.2407`).
+* **Full retraining (4096 envs)**: **Currently running** (`task-1794`). After solving the Robotiq joint mapping structure to include only the 6 active physical degrees of freedom, the policy is training at **48,000+ steps/second** with extremely stable value loss (**`0.0058`**) and climbing reach reward (**`0.1088`**).

@@ -16,7 +16,8 @@ All curriculum phases retrained from scratch on Isaac Lab with stable PPO config
 
 ### Phase 0 — Reach (TARGET: $\ge 90\%$ reach success)
 - [x] Succeeded in PPO normalizer sanity check (512 envs, 150 iterations; value loss: 0.0130, reward: 0.3243)
-- [/] Train full-scale REACH policy at 4096 envs for 1500 iterations (v14 active)
+- [x] Resolved Robotiq multi-joint articulation action mapping mismatch (6 PhysX joints)
+- [/] Train full-scale REACH policy at 4096 envs for 1500 iterations (v14 active, task-1794)
 - [ ] Evaluate success rate via coordinate-aligned tracking script
 - [ ] **Status: IN PROGRESS (v14 active)**
 

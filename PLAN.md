@@ -59,6 +59,7 @@ All training on **RTX 3060 Laptop GPU**, Isaac Lab + RSL-RL, 4096 parallel envs.
 - [x] Filter observation space to strictly 6 active arm joints, removing mimic joints
 - [x] Re-enable running observation normalization (`obs_normalization: True`) without freezing
 - [x] Succeeded in 150-iteration sanity check (Value loss: 0.0130, Reach reward: 0.3243)
+- [x] Refine Robotiq action config to map the 6 available PhysX gripper joints, excluding non-existent mimic joints
 - [x] Launch full 1500-iteration Phase 0 retraining at 4096 envs (v14 active)
 
 ### 2.2 Phase 1 → Phase 2 Pipeline
