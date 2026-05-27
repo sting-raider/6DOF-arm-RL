@@ -25,7 +25,8 @@
 - [x] Point `PHASES` models to `models/isaac/phase_{phase}/model.pt` in `evaluate_all.py`
 - [x] Point called entrypoint to `scripts/evaluate_isaac.py` in `evaluate_all.py`
 
-## 5. Verification & Testing ⏳ QUEUED
-- [ ] Run evaluation of Phase 0 with `HERMES_DISABLE_DR=1`
-- [ ] Run batch evaluation check with `evaluate_all.py --dry-run`
-- [ ] Push clean changes to GitHub repository
+## 5. Verification & Testing ✅ COMPLETE
+- [x] Run evaluation of Phase 0 with `HERMES_DISABLE_DR=1`
+- [x] Run batch evaluation check with `evaluate_all.py --dry-run`
+- [x] Push clean changes to GitHub repository
+
