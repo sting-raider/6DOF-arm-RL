@@ -92,20 +92,62 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    # Basket target.
-    # A single CuboidCfg is a solid box, not an open-top basket.
-    # Treated as a visual target proxy placed on the table.
-    basket = RigidObjectCfg(
-        prim_path="{ENV_REGEX_NS}/Basket",
+    # Basket target (Hollow, collision-enabled for Phase 2 PLACE).
+    basket_bottom = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/BasketBottom",
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(0.6, 0.0, 0.85),  # flush on top of the table: 0.81 + 0.04
+            pos=(0.6, 0.0, 0.815),
             rot=(1.0, 0.0, 0.0, 0.0),
         ),
         spawn=sim_utils.CuboidCfg(
-            size=(0.15, 0.15, 0.08),
+            size=(0.15, 0.15, 0.01),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.3, 0.1)),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
-            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+        ),
+    )
+
+    basket_wall_left = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/BasketWallLeft",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, -0.07, 0.85)),
+        spawn=sim_utils.CuboidCfg(
+            size=(0.15, 0.01, 0.08),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.3, 0.1)),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+        ),
+    )
+
+    basket_wall_right = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/BasketWallRight",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, 0.07, 0.85)),
+        spawn=sim_utils.CuboidCfg(
+            size=(0.15, 0.01, 0.08),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.3, 0.1)),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+        ),
+    )
+
+    basket_wall_front = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/BasketWallFront",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.67, 0.0, 0.85)),
+        spawn=sim_utils.CuboidCfg(
+            size=(0.01, 0.13, 0.08),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.3, 0.1)),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+        ),
+    )
+
+    basket_wall_back = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/BasketWallBack",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.53, 0.0, 0.85)),
+        spawn=sim_utils.CuboidCfg(
+            size=(0.01, 0.13, 0.08),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.6, 0.3, 0.1)),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
         ),
     )
 
