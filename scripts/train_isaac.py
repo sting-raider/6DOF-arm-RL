@@ -148,6 +148,14 @@ def main():
     # ── Create runner ────────────────────────────────────────────────────
     runner = OnPolicyRunner(env, ppo_cfg, log_dir=log_dir, device=device)
 
+    # ── Zero-init critic output layer ────────────────────────────────────
+    # PyTorch default init gives critic output ≈ ±10. With bootstrapping
+    # (time_out=True), this amplifies immediately: V≈10 → returns≈10×150 →
+    # value_loss starts at 10M. Zero-init makes V(s)≈0 so returns=reward≈0.1
+    runner.alg.critic.mlp[-1].weight.data.mul_(0.01)
+    runner.alg.critic.mlp[-1].bias.data.zero_()
+    print("  Zero-initialized critic output layer (prevents bootstrap amplification)")
+
     # ── Freeze obs normalizer after warmup ───────────────────────────────
     # The EmpiricalNormalization drifts with the changing policy, causing
     # reward collapse after ~50-80 iterations. Freezing it after N samples
