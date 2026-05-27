@@ -97,8 +97,8 @@ def main():
             "class_name": "PPO",
             "num_learning_epochs": 5,
             "num_mini_batches": 4,
-            "learning_rate": 1e-3,   # Match Isaac Lab reference (1e-3)
-            "gamma": 0.99,
+            "learning_rate": 1e-4,   # Reduced to 1e-4 for unnormalized manipulation stability
+            "gamma": 0.98,           # Reduced to 0.98 for stable manipulation return horizon
             "lam": 0.95,
             "clip_param": 0.2,
             "value_loss_coef": 1.0,
@@ -156,15 +156,7 @@ def main():
     runner.alg.critic.mlp[-1].bias.data.zero_()
     print("  Zero-initialized critic output layer (prevents bootstrap amplification)")
 
-    # ── Freeze obs normalizer after warmup ───────────────────────────────
-    # The EmpiricalNormalization drifts with the changing policy, causing
-    # reward collapse after ~50-80 iterations. Freezing it after N samples
-    # keeps the input scaling stable while still normalizing the raw obs.
-    NORMALIZER_FREEZE_AFTER = args_cli.num_envs * 24 * 5  # ~5 rollouts
-    for model in [runner.alg.actor, runner.alg.critic]:
-        if hasattr(model, 'obs_normalizer') and hasattr(model.obs_normalizer, 'until'):
-            model.obs_normalizer.until = NORMALIZER_FREEZE_AFTER
-            print(f"  Freezing {model.__class__.__name__} normalizer after {NORMALIZER_FREEZE_AFTER} samples")
+
 
     if args_cli.checkpoint:
         print(f"  Loading checkpoint: {args_cli.checkpoint}")

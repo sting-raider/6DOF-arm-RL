@@ -28,6 +28,8 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab_assets.robots.universal_robots import UR10e_ROBOTIQ_2F_85_CFG
 
 import isaac_env.mdp as mdp
+import isaaclab.envs.mdp as isaac_mdp
+
 
 
 @configclass
@@ -139,13 +141,43 @@ class ActionsCfg:
 class ObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
-        # Pre-scaled observations — avoids EmpiricalNormalization collapse.
-        # EE pos: raw ~[-0.5,1.5]m → scaled by /1.5 → ~[-0.33, 1.0]
-        # Object pos: raw ~[0.25,0.45]m local → kept as-is
-        # Gripper: raw [0, 0.04]m → scaled ×25 → [0, 1.0]
+        # Joint states (6 active arm joints)
+        joint_pos = ObsTerm(
+            func=isaac_mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[
+                    "shoulder_pan_joint",
+                    "shoulder_lift_joint",
+                    "elbow_joint",
+                    "wrist_1_joint",
+                    "wrist_2_joint",
+                    "wrist_3_joint",
+                ]
+            )}
+        )
+        joint_vel = ObsTerm(
+            func=isaac_mdp.joint_vel_rel,
+            params={"asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[
+                    "shoulder_pan_joint",
+                    "shoulder_lift_joint",
+                    "elbow_joint",
+                    "wrist_1_joint",
+                    "wrist_2_joint",
+                    "wrist_3_joint",
+                ]
+            )}
+        )
+        # End effector position and gripper state
         ee_pos = ObsTerm(func=mdp.ee_position_scaled, params={"link_name": "wrist_3_link"})
-        object_pos = ObsTerm(func=mdp.object_position)
         gripper_state = ObsTerm(func=mdp.gripper_state_scaled)
+        # Object position and relative distance vector
+        object_pos = ObsTerm(func=mdp.object_position)
+        relative_pos = ObsTerm(func=mdp.relative_position)
+        # Last actions (7 control deltas)
+        actions = ObsTerm(func=isaac_mdp.last_action)
 
         def __post_init__(self):
             self.enable_corruption = False
@@ -217,3 +249,10 @@ class PickPlaceEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 1.0 / 60.0
         self.sim.render_interval = self.decimation
         self.viewer.eye = (1.5, 1.5, 1.5)
+
+        # ── Stable PhysX Contacts (Standard for Isaac Lab Manipulation Tasks) ──
+        self.sim.physx.bounce_threshold_velocity = 0.2
+        self.sim.physx.bounce_threshold_velocity = 0.01
+        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
+        self.sim.physx.friction_correlation_distance = 0.00625

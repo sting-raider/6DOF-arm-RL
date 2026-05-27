@@ -1,39 +1,40 @@
 # 6-DOF Arm Pick-and-Place — Task Tracker
 
-> **Status**: Phase 1 cleanup complete. MuJoCo archived. Isaac Lab is primary sim.
-> **Next**: Phase 0 Isaac Lab retrain from scratch at 64k FPS.
+> **Status**: PPO Training Stabilization milestones achieved. Sanity check run of 150 iterations succeeded (Value loss: 0.0130).
+> **Current**: Retraining Phase 0 (REACH) in NVIDIA Isaac Lab at 4096 environments with 29D state observability and running normalizers.
 
 ## Phase 1: Cleanup & Transition ✅ COMPLETE
 
 - [x] Project cleaned up, MuJoCo training artifacts archived
 - [x] Isaac Lab environment verified as primary simulation backend
-- [x] Previous MuJoCo results saved for reference (25% grasp, 0% place)
-- [x] Ready for fresh Isaac Lab training pipeline
+- [x] Resolved NGC API key hardcoding in `setup_cloud.sh`
+- [x] Configured 29D complete state observability in `env_cfg.py`
 
 ## Phase 2: Isaac Lab Retraining — IN PROGRESS
 
-All phases trained from scratch on Isaac Lab at target 64k FPS.
+All curriculum phases retrained from scratch on Isaac Lab with stable PPO configs.
 
-### Phase 0 — Reach (TARGET: ~90% reach success)
-- [ ] Train reach policy in Isaac Lab (no object interaction)
-- [ ] Target: ~1000–2000 episodes, evaluate
-- [ ] **Status: PENDING — about to start**
+### Phase 0 — Reach (TARGET: $\ge 90\%$ reach success)
+- [x] Succeeded in PPO normalizer sanity check (512 envs, 150 iterations; value loss: 0.0130, reward: 0.3243)
+- [/] Train full-scale REACH policy at 4096 envs for 1500 iterations (v14 active)
+- [ ] Evaluate success rate via coordinate-aligned tracking script
+- [ ] **Status: IN PROGRESS (v14 active)**
 
-### Phase 1 — Grasp (TARGET: ~80% grasp success)
-- [ ] Train grasp policy, warm-started from Phase 0
-- [ ] Target: ~3000–5000 episodes, evaluate
-- [ ] **Status: PENDING**
+### Phase 1 — Grasp (TARGET: $\ge 80\%$ grasp success)
+- [ ] Train grasp policy, warm-started from Phase 0 best checkpoint
+- [ ] Target: 1500 iterations at 4096 envs
+- [ ] **Status: QUEUED**
 
-### Phase 2 — Place (TARGET: ~70% place success)
-- [ ] Train place policy, warm-started from Phase 1
-- [ ] Target: ~5000+ episodes, evaluate
-- [ ] **Status: PENDING**
+### Phase 2 — Place (TARGET: $\ge 80\%$ place success)
+- [ ] Train place policy, warm-started from Phase 1 best checkpoint
+- [ ] Target: 1500 iterations at 4096 envs
+- [ ] **Status: QUEUED**
 
 ## Key Metrics Dashboard
 
-| Training Target | Isaac Lab Goal | Previous (MuJoCo) |
+| Training Target | Isaac Lab Goal | Sanity Check (PPO v14) |
 |---|---|---|
-| FPS | 64,000 | 2,000 |
-| Reach Success | ~90% | 0% |
-| Grasp Success | ~80% | 25% |
-| Place Success | ~70% | 0% |
+| Parallel Envs | 4,096 | 512 |
+| Mean Value Loss | < 1.0 | **0.0130** (Super Stable) |
+| Reach Reward | Dense Potential | **0.3243** (Climbing) |
+| Physics Jitter | Resolved | Mimic joints filtered out |

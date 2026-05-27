@@ -44,11 +44,10 @@ def main():
     raw_env = ManagerBasedRLEnv(cfg=env_cfg)
     env = RslRlVecEnvWrapper(raw_env)
 
-    # Eval with obs_normalization=False — load weights with strict=False
-    # to skip the normalizer state. Policy MLP weights are identical.
+    # Eval with obs_normalization=True — load weights and normalizer statistics.
     ppo_cfg = {
         "algorithm": {"class_name": "PPO", "num_learning_epochs": 8, "num_mini_batches": 4,
-                      "learning_rate": 3e-4, "gamma": 0.99, "lam": 0.95,
+                      "learning_rate": 1e-4, "gamma": 0.98, "lam": 0.95,
                       "clip_param": 0.2, "desired_kl": 0.01, "entropy_coef": 0.01,
                       "max_grad_norm": 1.0},
         "runner": {"class_name": "OnPolicyRunner", "max_iterations": 1,
@@ -115,7 +114,7 @@ def main():
 
         # Get REAL (unnormalized) positions from the Isaac Lab scene
         ee_pos = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
-        obj_pos = obj.data.root_pos_w
+        obj_pos = obj.data.root_pos_w - raw_env.scene.env_origins
         grip_state = robot.data.joint_pos[:, -1]
 
         ee_to_obj = torch.norm(ee_pos - obj_pos, dim=1)

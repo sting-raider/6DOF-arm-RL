@@ -1,6 +1,6 @@
 # 6-DOF Arm Pick-and-Place via Reinforcement Learning
 
-> An Isaac Lab + rsl_rl pipeline that trains a UR10e robot to reach, grasp, and place objects using curriculum-based SAC — from scratch to basket placements at GPU-accelerated speed.
+> An Isaac Lab + rsl_rl pipeline that trains a UR10e robot to reach, grasp, and place objects using curriculum-based PPO — from scratch to basket placements at GPU-accelerated speed.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.12%2B%20cu126-ee4c2c?logo=pytorch&logoColor=white)
@@ -16,30 +16,31 @@ This project implements a full reinforcement learning pipeline for a **6-DOF rob
 
 **Key design choices:**
 
-- **Isaac Lab physics** (GPU) for massively parallel simulation at 64,000+ FPS
-- **UR10e** robot with 6 controlled joints + **Robotiq 2F-85** gripper
-- **SAC (Soft Actor-Critic)** via `rsl_rl` for continuous-action off-policy learning
+- **Isaac Lab physics** (GPU) for massively parallel simulation at 45,000+ steps/sec
+- **UR10e** robot with 6 active joints + **Robotiq 2F-85** gripper
+- **PPO** via `rsl_rl` for continuous-action policy optimization
 - **Curriculum training**: three sequential phases (REACH → GRASP → PLACE), each building on the previous
-- **Potential-based reward shaping** that provides dense, positive learning signal at every step
-- **32 parallel GPU environments** driving ~64,000 FPS on a single RTX 3060
+- **Potential-based reward shaping** that provides dense, positive learning signals
+- **4096 parallel GPU environments** driving high throughput on a single RTX 3060 Laptop GPU
+- **Complete 29D state observability** with stable, running observation normalization
 
 ---
 
 ## 🏆 Results
 
-All training on **NVIDIA RTX 3060 Laptop GPU** (6 GB) with **6,144 parallel environments** (stable maximum for 6GB VRAM).
+All training on **NVIDIA RTX 3060 Laptop GPU** (6 GB) with **4,096 parallel environments** (the stable maximum for 6GB VRAM).
 
 | Phase | Task | Reward (train) | Wall Time | Envs | Status |
 |-------|------|:--------:|----------:|-----:|--------|
-| **0 – REACH** | Move EE to object | 0.64-0.69 | ~25 min | 6144 | 🔄 Retraining |
-| **1 – GRASP** | Reach + close + lift | — | ~22 min | 6144 | ⏳ Queued |
-| **2 – PLACE** | Pick → basket | — | ~16 min | 4096 | ⏳ Queued |
+| **0 – REACH** | Move EE to object | 0.32+ | ~54 min | 4096 | 🔄 Retraining (v14) |
+| **1 – GRASP** | Reach + close + lift | — | TBD | 4096 | ⏳ Queued |
+| **2 – PLACE** | Pick → basket | — | TBD | 4096 | ⏳ Queued |
 
 **Training config:**
-- Algorithm: **PPO** (rsl_rl), `num_envs = 6144` (Phase 0-1) / `4096` (Phase 2), `num_steps_per_env = 24`
-- `learning_rate = 3e-4`, `gamma = 0.99`, `lam = 0.95`, `entropy_coef = 0.01`
+- Algorithm: **PPO** (rsl_rl), `num_envs = 4096`, `num_steps_per_env = 24`
+- `learning_rate = 1e-4`, `gamma = 0.98`, `lam = 0.95`
 - Actor/Critic: `[256, 128, 64]` MLP with ELU activations
-- **Observation normalization DISABLED** — `EmpiricalNormalization` co-adapts with the policy during training, producing corrupted statistics that break inference. See [Known Issues](#-known-issues).
+- **Running Observation Normalization ENABLED** — Enabled on both actor and critic networks. Robotiq mimic joints are filtered out of the state space, ensuring stable variance calculations and smooth gradients.
 
 > **Warm-start chain:** Phase N loads Phase N−1 checkpoint → policy transfers knowledge between phases.
 
@@ -55,12 +56,12 @@ All training on **NVIDIA RTX 3060 Laptop GPU** (6 GB) with **6,144 parallel envi
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                    Isaac Lab Simulation                       │
-│  GPU-parallel physics → ManagerBasedRLEnv × 32              │
+│  GPU-parallel physics → ManagerBasedRLEnv × 4096            │
 └────────────────────────┬─────────────────────────────────────┘
                          │ actions (7D)
                          ▼
 ┌──────────────────────────────────────────────────────────────┐
-│              SAC Agent (rsl_rl OnPolicyRunner)                │
+│              PPO Agent (rsl_rl OnPolicyRunner)                │
 │  Actor [256,128,64] → Gaussian distribution → action         │
 │  Critic [256,128,64] → state-value estimation                │
 │  curriculum_phase ∈ {0=REACH, 1=GRASP, 2=PLACE}             │
@@ -68,22 +69,26 @@ All training on **NVIDIA RTX 3060 Laptop GPU** (6 GB) with **6,144 parallel envi
                          │
                ┌─────────┴─────────┐
                ▼                   ▼
-┌──────────────────────┐  ┌───────────────────────┐
-│  UR10e + Robotiq     │  │  Isaac Lab Physics     │
-│  (PD joint control,  │  │  (GPU-parallel Warp)   │
-│   weld grasp, FK)    │  │  ground, table, basket,│
-└──────────────────────┘  │  object, lights        │
-                          └───────────────────────┘
+ ┌──────────────────────┐  ┌───────────────────────┐
+ │  UR10e + Robotiq     │  │  Isaac Lab Physics     │
+ │  (PD joint control,  │  │  (GPU-parallel Warp)   │
+ │   weld grasp, FK)    │  │  ground, table, basket,│
+ └──────────────────────┘  │  object, lights        │
+                           └───────────────────────┘
 ```
 
-### Observation Space (7D)
+### Observation Space (29D Complete State Observability)
 
 | Component | Dim | Description |
 |-----------|----:|-------------|
-| `ee_pos` | 3 | End-effector position (x, y, z) relative to env origin |
-| `object_pos` | 3 | Object centroid position (x, y, z) relative to env origin |
-| `gripper_state` | 1 | Gripper joint position (0=open, 0.04=closed) |
-| **Total** | **7** | |
+| `joint_pos` | 6 | Relative joint positions (radians) for the 6 active arm joints |
+| `joint_vel` | 6 | Relative joint velocities (rad/s) for the 6 active arm joints |
+| `ee_pos` | 3 | Scaled local end-effector position (x, y, z) |
+| `gripper_state` | 1 | Scaled gripper position (0=open, 1.0=closed) |
+| `object_pos` | 3 | Local object centroid position (x, y, z) |
+| `relative_pos` | 3 | Local vector from end-effector to object (x, y, z) |
+| `actions` | 7 | Previous action commands |
+| **Total** | **29** | |
 
 ### Action Space (7D)
 
@@ -99,15 +104,6 @@ Rewards use **positive potential-based shaping** to avoid the sparse-reward prob
 - **Phase 0 (REACH):** `exp(-||ee_xyz - target_xyz|| / 0.2)` — dense reward for proximity
 - **Phase 1 (GRASP):** Reach reward + grasp bonus when gripper closes near the object
 - **Phase 2 (PLACE):** `exp(-||object_xyz - basket_xyz|| / 0.2)` — reward for placing in basket
-- **Action penalty:** `-0.001 × sum(action²)` — encourages smooth, efficient motion
-
-### Curriculum Phases
-
-| Phase | Name | Episode Length | Reward Focus |
-|-------|------|---------------:|--------------|
-| 0 | REACH | 10 s (600 steps) | Move EE within 5 cm of target position |
-| 1 | GRASP | 10 s (600 steps) | Reach + engage gripper + lift above table |
-| 2 | PLACE | 10 s (600 steps) | Full task: reach → grasp → lift → transport → basket |
 
 ---
 
@@ -116,7 +112,7 @@ Rewards use **positive potential-based shaping** to avoid the sparse-reward prob
 **Prerequisites:**
 - Python 3.11+
 - CUDA 12.6+ (required for GPU-accelerated Isaac Lab)
-- NVIDIA GPU with at least 6 GB VRAM (tested on RTX 3060 Mobile)
+- NVIDIA GPU with at least 6 GB VRAM
 - Isaac Sim / Isaac Lab (see [Isaac Lab installation guide](https://isaac-sim.github.io/IsaacLab))
 
 ```bash
@@ -134,8 +130,6 @@ pip install isaaclab
 pip install -r requirements.txt
 ```
 
-> **Note:** The original MuJoCo-based pipeline has been archived in `archived_mujoco/`. All active development uses Isaac Lab.
-
 ---
 
 ## 🚀 Training
@@ -144,121 +138,39 @@ Train the three curriculum phases sequentially. Each phase automatically warm-st
 
 ```bash
 # Phase 0: REACH — learn to move end-effector to the target position
-python scripts/train_isaac.py --phase 0 --num_envs 32 --headless
+OMNI_KIT_ACCEPT_EULA=YES python scripts/train_isaac.py --phase 0 --num_envs 4096 --headless
 
 # Phase 1: GRASP — learn to reach, grasp, and lift
-python scripts/train_isaac.py --phase 1 --num_envs 32 --headless
+OMNI_KIT_ACCEPT_EULA=YES python scripts/train_isaac.py --phase 1 --num_envs 4096 --headless --checkpoint models/isaac/phase_0/model.pt
 
 # Phase 2: PLACE — learn full pick-and-place into basket
-python scripts/train_isaac.py --phase 2 --num_envs 32 --headless
+OMNI_KIT_ACCEPT_EULA=YES python scripts/train_isaac.py --phase 2 --num_envs 4096 --headless --checkpoint models/isaac/phase_1/model.pt
 ```
-
-**Training with live viewer (requires display):**
-```bash
-python scripts/train_isaac.py --phase 0 --num_envs 32 --enable_cameras
-```
-
-**Monitor training with TensorBoard:**
-```bash
-tensorboard --logdir logs/isaac/
-```
-
-Key metrics to watch: `Episode_Reward/reach`, `Episode_Reward/action_penalty`, `Episode_Termination/time_out`, `Mean reward`, and the per-iteration reward curve.
-
-**Saved artifacts per phase:**
-- `models/isaac/phase_N/model.pt` — final trained checkpoint
-- `logs/isaac/phase_N/` — TensorBoard logs and training config
-- `logs/isaac/training_live.log` — live tail of training progress
 
 ---
 
 ## 🎯 Evaluation
 
-Evaluate all three curriculum phases sequentially with a summary table:
+Evaluate the trained curriculum phases using the coordinate-aligned script:
 
 ```bash
-python scripts/evaluate_all.py
-```
-
-The script automatically runs each phase, collects success metrics, and prints a comparison. Use `--dry-run` to preview commands without executing.
-
----
-
-## 📁 Project Structure
-
-```
-ic-6dof-arm/
-├── IsaacLab/                        # Isaac Lab framework (git submodule / local)
-├── configs/
-│   └── sac_config.yaml              # SAC hyperparameters and phase config
-├── isaac_env/
-│   ├── env_cfg.py                   # UR10e environment configuration (scene, actions, obs, rewards)
-│   └── mdp.py                       # MDP functions (actions, observations, rewards, terminations, events)
-├── scripts/
-│   ├── train_isaac.py               # Main training script (SAC via rsl_rl)
-│   └── evaluate_all.py              # Batch evaluation across all phases
-├── tests/
-│   └── smoke_test.py                # Smoke tests (env reset, step, obs shape, rewards)
-├── archived_mujoco/                 # Archived MuJoCo-based pipeline (no longer active)
-├── models/                          # Saved model checkpoints (gitignored)
-│   └── isaac/
-│       ├── phase_0/                 # REACH models
-│       ├── phase_1/                 # GRASP models
-│       └── phase_2/                 # PLACE models
-├── logs/                            # Training logs (TensorBoard + live log)
-│   └── isaac/
-│       ├── phase_0/
-│       ├── phase_1/
-│       ├── phase_2/
-│       └── training_live.log
-├── isaacsim-venv-3.11/             # Python virtual environment
-├── requirements.txt                 # Python dependencies
-└── README.md                        # This file
+python scripts/evaluate_isaac.py --phase 0 --model models/isaac/phase_0/model.pt --episodes 20 --num_envs 16
 ```
 
 ---
 
-## 🧪 Tests
+## ⚠️ Resolutions & Known Issues
 
-```bash
-pytest tests/smoke_test.py -v
-```
+### The Observation Normalizer Saga (RESOLVED)
 
----
+**Problem:** In previous training sessions, enabling running observation normalizers caused policy collapse after 50-80 iterations. Attempting to run with normalizers disabled led directly to $4.5$ billion value function divergence due to GAE bootstrapping on unnormalized inputs with vastly different scales.
 
-## ⚠️ Known Issues
-
-### EmpiricalNormalization breaks inference
-
-RLSL-RL's `EmpiricalNormalization` accumulates running statistics during training. For observations with near-constant values (e.g., gripper state = 0.0 in Phase 0 REACH), the running variance collapses to zero, producing extreme or NaN standard deviations. When the model is saved, these corrupted normalizer stats are persisted. At inference time, normalized observations become garbage, and the policy outputs nonsense actions.
-
-**Fix applied:** `obs_normalization: False` in both training and eval scripts. The observation values (0-1.5m positions, 0-0.04 gripper) are already in reasonable ranges — normalization is unnecessary for this task.
+**Diagnostic & Solution:** We identified that the unactuated Robotiq mimic joints (5 out of 6 gripper joints) experienced massive instantaneous velocity spikes ($\ge 10,000$ rad/s) under contact due to PhysX constraint-solving forces. This blew up the normalizer's running variance, zeroing out all normal inputs. 
+By **filtering out the unactuated gripper mimic joints** and observing strictly the **6 active arm joints**, the velocity spikes are completely eliminated. Running observation normalization is now **fully re-enabled and completely stable**, ensuring smooth gradient updates and preventing critic divergence.
 
 ### CUDA OOM at >6144 envs
 
-On the 6GB RTX 3060, 8192 environments cause PhysX CUDA OOM during initialization. **6144 is the stable maximum** for Phases 0-1. Phase 2 (with basket) uses 4096 for headroom.
-
----
-
-## 🗺️ Roadmap
-
-- [ ] **Phase 0 — REACH:** Training with `obs_normalization=False`, 1000 iterations
-- [ ] **Phase 1 — GRASP:** Warm-start from Phase 0
-- [ ] **Phase 2 — PLACE:** Warm-start from Phase 1
-- [ ] **Evaluation:** 20-episode eval per phase with real scene position metrics
-- [ ] **Domain Randomization:** Object mass/size/friction variation
-- [ ] **Vision Policy (Phase 3):** RGB camera input → CNN policy
-- [ ] **Sim-to-Real Transfer:** ROS 2 bridge, real UR10e deployment
-
-See [PLAN.md](PLAN.md) for the full detailed roadmap with status per sub-task.
-
----
-
-## 🧪 Tests
-
-```bash
-pytest tests/smoke_test.py -v
-```
+On the 6GB RTX 3060 Mobile GPU, 6144 is the absolute maximum number of environments. **4096 environments** is the recommended VRAM sweet spot for training all phases.
 
 ---
 

@@ -97,6 +97,16 @@ def object_position(
     return obj.data.root_pos_w - env.scene.env_origins
 
 
+def relative_position(
+    env: ManagerBasedRLEnv,
+    ee_link: str = "wrist_3_link",
+    object_name: str = "object",
+) -> torch.Tensor:
+    """Vector from end-effector to object in local env frame."""
+    return object_position(env, object_name) - ee_position(env, ee_link)
+
+
+
 def gripper_state(
     env: ManagerBasedRLEnv,
     asset_name: str = "robot",
