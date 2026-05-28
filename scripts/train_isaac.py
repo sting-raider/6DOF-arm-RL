@@ -98,10 +98,10 @@ def main():
             "learning_rate": 3e-4,   # increased for faster convergence
             "gamma": 0.995,           # longer horizon for approach trajectories
             "lam": 0.95,
-            "clip_param": 0.25,      # wider clip for more exploration
+            "clip_param": 0.2,       # standard for stable updates at scale
             "value_loss_coef": 1.0,
             "desired_kl": 0.01,
-            "entropy_coef": 0.01,    # increased to prevent premature determinism
+            "entropy_coef": 0.001,   # low — task is dense enough without exploration bonus
             "max_grad_norm": 1.0,
             "rnd_cfg": None,
         },

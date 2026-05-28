@@ -44,11 +44,11 @@ def main():
     raw_env = ManagerBasedRLEnv(cfg=env_cfg)
     env = RslRlVecEnvWrapper(raw_env)
 
-    # Eval with obs_normalization=True — load weights and normalizer statistics.
+    # Eval PPO config — architecture must match training, hyperparams are irrelevant
     ppo_cfg = {
-        "algorithm": {"class_name": "PPO", "num_learning_epochs": 8, "num_mini_batches": 4,
-                      "learning_rate": 1e-4, "gamma": 0.98, "lam": 0.95,
-                      "clip_param": 0.2, "desired_kl": 0.01, "entropy_coef": 0.01,
+        "algorithm": {"class_name": "PPO", "num_learning_epochs": 8, "num_mini_batches": 8,
+                      "learning_rate": 3e-4, "gamma": 0.995, "lam": 0.95,
+                      "clip_param": 0.2, "desired_kl": 0.01, "entropy_coef": 0.001,
                       "max_grad_norm": 1.0},
         "runner": {"class_name": "OnPolicyRunner", "max_iterations": 1,
                     "experiment_name": "eval", "log_dir": "/tmp/eval_log", "resume": False},
@@ -72,7 +72,7 @@ def main():
     # ── Warmup: adapt normalizer to eval environment ─────────────────────
     print("  Warming up normalizer for eval env...")
     obs_dict = env.get_observations()
-    for _ in range(50):  # 50 steps to adapt stats to 16-env distribution
+    for _ in range(200):  # 200 steps to properly adapt stats
         with torch.no_grad():
             actions = runner.alg.actor(obs_dict, stochastic_output=False)
         obs_dict, _, _, _ = env.step(actions)
