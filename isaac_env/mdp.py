@@ -235,14 +235,15 @@ def reach_reward(
     closedness = torch.clamp(gripper_joint_pos / 0.785398163, 0.0, 1.0)
 
     if phase == 0:
-        # ── REACH: two-stage reward to break plateau ──
-        # Coarse: guides from far away (d > 20cm)
-        # Fine: steep gradient near object for precision
-        # Success: large bonus when within threshold
+        # ── REACH: two-stage reward + progress to break plateau ──
         coarse = torch.exp(-ee_to_obj / 0.25)
         fine   = torch.exp(-ee_to_obj / 0.08)
         success = (ee_to_obj < 0.08).float()
-        return 0.3 * coarse + 0.4 * fine + 2.0 * success
+        # Progress: reward reducing distance each step
+        prev_dist = getattr(env, '_prev_ee_obj_dist', ee_to_obj.detach())
+        progress = torch.clamp(prev_dist - ee_to_obj, -0.05, 0.05)
+        env._prev_ee_obj_dist = ee_to_obj.detach()
+        return 0.25 * coarse + 0.35 * fine + 0.2 * (1.0 + progress / 0.05) + 2.0 * success
 
     elif phase == 1:
         # ── GRASP: reach + gripper-closed bonus ──
