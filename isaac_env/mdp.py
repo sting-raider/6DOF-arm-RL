@@ -80,6 +80,18 @@ def gripper_state_scaled(env, asset_name="robot"):
     return gripper_state(env, asset_name) / 0.785398163
 
 
+def ee_to_object_distance(
+    env: ManagerBasedRLEnv,
+    ee_link: str = "wrist_3_link",
+) -> torch.Tensor:
+    """Scalar distance from end-effector to object centroid."""
+    robot = env.scene["robot"]
+    ee_idx = robot.data.body_names.index(ee_link)
+    ee_pos = robot.data.body_pos_w[:, ee_idx] - env.scene.env_origins
+    obj_pos = object_position(env)
+    return torch.norm(ee_pos - obj_pos, dim=1, keepdim=True)
+
+
 # =============================================================================
 # TERMINATION TERMS
 # =============================================================================
@@ -223,8 +235,14 @@ def reach_reward(
     closedness = torch.clamp(gripper_joint_pos / 0.785398163, 0.0, 1.0)
 
     if phase == 0:
-        # ── REACH: distance from EE to object ──
-        return torch.exp(-ee_to_obj / std)
+        # ── REACH: two-stage reward to break plateau ──
+        # Coarse: guides from far away (d > 20cm)
+        # Fine: steep gradient near object for precision
+        # Success: large bonus when within threshold
+        coarse = torch.exp(-ee_to_obj / 0.25)
+        fine   = torch.exp(-ee_to_obj / 0.08)
+        success = (ee_to_obj < 0.08).float()
+        return 0.3 * coarse + 0.4 * fine + 2.0 * success
 
     elif phase == 1:
         # ── GRASP: reach + gripper-closed bonus ──

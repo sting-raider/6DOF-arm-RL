@@ -254,6 +254,9 @@ class ObservationsCfg:
         object_pos = ObsTerm(func=mdp.object_position)
         relative_pos = ObsTerm(func=mdp.relative_position)
 
+        # Scalar distance — helps policy gauge approach quality
+        distance = ObsTerm(func=mdp.ee_to_object_distance)
+
         # Last actions (6 arm + 1 gripper command from the manager action interface)
         actions = ObsTerm(func=isaac_mdp.last_action)
 

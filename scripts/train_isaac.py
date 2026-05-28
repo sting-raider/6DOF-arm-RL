@@ -93,15 +93,15 @@ def main():
     ppo_cfg = {
         "algorithm": {
             "class_name": "PPO",
-            "num_learning_epochs": 5,
-            "num_mini_batches": 4,
-            "learning_rate": 1e-4,   # Reduced to 1e-4 for unnormalized manipulation stability
-            "gamma": 0.98,           # Reduced to 0.98 for stable manipulation return horizon
+            "num_learning_epochs": 8,
+            "num_mini_batches": 8,
+            "learning_rate": 3e-4,   # increased for faster convergence
+            "gamma": 0.995,           # longer horizon for approach trajectories
             "lam": 0.95,
-            "clip_param": 0.2,
+            "clip_param": 0.25,      # wider clip for more exploration
             "value_loss_coef": 1.0,
             "desired_kl": 0.01,
-            "entropy_coef": 0.005,
+            "entropy_coef": 0.01,    # increased to prevent premature determinism
             "max_grad_norm": 1.0,
             "rnd_cfg": None,
         },
