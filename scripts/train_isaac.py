@@ -160,6 +160,13 @@ def main():
         print(f"  Loading checkpoint: {args_cli.checkpoint}")
         runner.load(args_cli.checkpoint)
 
+    # ── Curriculum: start with closer objects, expand over training ─────
+    # Phase 0 only — tightens then expands object x-range for precision
+    if args_cli.phase == 0 and not args_cli.checkpoint:
+        # Fresh training: start easy
+        env_cfg.events.reset_object.params["pose_range"]["x"] = (0.30, 0.40)
+        print("  Curriculum: narrow object range (0.30-0.40) for first 300 iters")
+
     # ── Train ────────────────────────────────────────────────────────────
     print("  Starting training...")
     start_time = time.time()
