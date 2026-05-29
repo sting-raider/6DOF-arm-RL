@@ -243,28 +243,30 @@ def reach_reward(
 
     elif phase == 1:
         # ── GRASP: reach + close bonus + grasp + lift ──
-        # Reach: strong base — policy must stay close
+        # Reach: strong base
         reach = torch.exp(-ee_to_obj / 0.05) * 0.5
         
-        # Close bonus: reward CLOSING the gripper when near object (bridges reach→grasp)
+        # Close bonus: reward gripper close COMMAND when near object
         is_near = (ee_to_obj < 0.08).float()
-        gripper_velocity = robot.data.joint_vel[:, finger_idx]
-        is_closing = (gripper_velocity > 0.01).float()  # positive velocity = closing
-        close_bonus = 0.5 * is_near * is_closing
+        gripper_cmd = env.action_manager.action[:, 6]  # dim 6 = gripper (binary)
+        is_closing = (gripper_cmd > 0.0).float()
+        close_bonus = 1.5 * is_near * is_closing  # increased from 0.5
         
-        # Grasp detection: object grasped if gripper >50% closed AND object close to EE
+        # Hover penalty: small cost for being near but not closing
+        hover_penalty = -0.05 * is_near * (1.0 - is_closing)
+        
+        # Grasp detection
         is_grasping = (closedness > 0.5) & (ee_to_obj < 0.03)
         grasp_reward = is_grasping.float() * 1.0
         
-        # Lift: reward object height above table (table at z=0.80)
+        # Lift reward
         obj_z = obj_pos[:, 2]
         height_above = torch.clamp(obj_z - 0.80 - 0.02, 0.0, 0.10)
         lift_shaping = (height_above / 0.08) * 2.0
         
-        # Lift bonus when object is clearly lifted
         lift_bonus = 2.0 * (height_above > 0.05).float() * is_grasping.float()
         
-        return reach + close_bonus + grasp_reward + lift_shaping + lift_bonus
+        return reach + close_bonus + hover_penalty + grasp_reward + lift_shaping + lift_bonus
 
     elif phase == 2:
         # ── PLACE: Phase 1 reach+grasp + basket bonus ──
