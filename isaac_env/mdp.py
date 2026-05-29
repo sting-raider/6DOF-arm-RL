@@ -246,14 +246,13 @@ def reach_reward(
         # Reach: strong base
         reach = torch.exp(-ee_to_obj / 0.05) * 0.5
         
-        # Close bonus: reward gripper close COMMAND when near object
+        # Close bonus: reward actual gripper closure when near object
+        # Uses joint position (closedness) — works in reward context
         is_near = (ee_to_obj < 0.08).float()
-        gripper_cmd = env.action_manager.action[:, 6]  # dim 6 = gripper (binary)
-        is_closing = (gripper_cmd > 0.0).float()
-        close_bonus = 1.5 * is_near * is_closing  # increased from 0.5
+        close_bonus = 1.5 * is_near * closedness  # 0=open, 1=closed
         
         # Hover penalty: small cost for being near but not closing
-        hover_penalty = -0.05 * is_near * (1.0 - is_closing)
+        hover_penalty = -0.05 * is_near * (1.0 - closedness)
         
         # Grasp detection
         is_grasping = (closedness > 0.5) & (ee_to_obj < 0.03)
