@@ -160,6 +160,43 @@ def main():
         print(f"  Loading checkpoint: {args_cli.checkpoint}")
         runner.load(args_cli.checkpoint)
 
+    # ── Auto-close gripper for Phase 1 ───────────────────────────────────
+    if args_cli.phase == 1:
+        # Access underlying Isaac Lab env through RSL wrapper
+        raw_env = env.unwrapped if hasattr(env, 'unwrapped') else env
+        robot = raw_env.scene["robot"]
+        ee_idx = robot.data.body_names.index("wrist_3_link")
+        finger_idx = robot.data.joint_names.index("finger_joint")
+        obj = raw_env.scene["object"]
+        
+        def auto_close_gripper():
+            """Force gripper close when EE is near object (for Phase 1 grasping)."""
+            ee_pos = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
+            obj_pos = obj.data.root_pos_w - raw_env.scene.env_origins
+            dist = torch.norm(ee_pos - obj_pos, dim=1)
+            near = dist < 0.04
+            # Set gripper joint targets (finger_joint + 5 dependent joints)
+            if near.any():
+                close_val = 0.785398163  # π/4 — fully closed
+                for jn in ["finger_joint", "right_outer_knuckle_joint",
+                           "right_inner_finger_joint"]:
+                    ji = robot.data.joint_names.index(jn)
+                    robot.data.joint_pos[near, ji] = close_val
+                for jn in ["right_inner_finger_knuckle_joint",
+                           "left_inner_finger_knuckle_joint",
+                           "left_inner_finger_joint"]:
+                    ji = robot.data.joint_names.index(jn)
+                    robot.data.joint_pos[near, ji] = -close_val
+        
+        # Monkey-patch the step to auto-close after each action
+        _orig_step = env.step
+        def _step_with_auto_close(actions):
+            obs, rew, dones, info = _orig_step(actions)
+            auto_close_gripper()
+            return obs, rew, dones, info
+        env.step = _step_with_auto_close
+        print("  Auto-close gripper enabled (closes at <4cm)")
+
     # ── Curriculum: start with closer objects, expand over training ─────
     # Phase 0 only — tightens then expands object x-range for precision
     if args_cli.phase == 0 and not args_cli.checkpoint:

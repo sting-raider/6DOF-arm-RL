@@ -242,30 +242,10 @@ def reach_reward(
         return reach + bonus_8cm + bonus_5cm
 
     elif phase == 1:
-        # ── GRASP: reach + close bonus + grasp + lift ──
-        # Reach: strong base
-        reach = torch.exp(-ee_to_obj / 0.05) * 0.5
-        
-        # Close bonus: reward actual gripper closure when near object
-        # Uses joint position (closedness) — works in reward context
-        is_near = (ee_to_obj < 0.08).float()
-        close_bonus = 1.5 * is_near * closedness  # 0=open, 1=closed
-        
-        # Hover penalty: small cost for being near but not closing
-        hover_penalty = -0.05 * is_near * (1.0 - closedness)
-        
-        # Grasp detection
-        is_grasping = (closedness > 0.5) & (ee_to_obj < 0.03)
-        grasp_reward = is_grasping.float() * 1.0
-        
-        # Lift reward
-        obj_z = obj_pos[:, 2]
-        height_above = torch.clamp(obj_z - 0.80 - 0.02, 0.0, 0.10)
-        lift_shaping = (height_above / 0.08) * 2.0
-        
-        lift_bonus = 2.0 * (height_above > 0.05).float() * is_grasping.float()
-        
-        return reach + close_bonus + hover_penalty + grasp_reward + lift_shaping + lift_bonus
+        # ── GRASP: same reach reward as Phase 0 + scripted auto-close ──
+        # The policy focuses on reaching; gripper auto-closes when near.
+        # See train_isaac.py auto_close_gripper() for the script.
+        return torch.exp(-ee_to_obj / 0.10) + 2.0 * (ee_to_obj < 0.08).float() + 1.0 * (ee_to_obj < 0.05).float()
 
     elif phase == 2:
         # ── PLACE: Phase 1 reach+grasp + basket bonus ──
