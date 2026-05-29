@@ -176,10 +176,11 @@ def main():
             dist = torch.norm(ee_pos - obj_pos, dim=1)
             near = dist < 0.06
             if near.any():
-                joint_pos = robot.data.joint_pos.clone()
-                joint_pos[near, finger_idx] = 0.785
+                near_ids = torch.where(near)[0]
+                joint_pos = robot.data.joint_pos[near_ids].clone()
+                joint_pos[:, finger_idx] = 0.785
                 joint_vel = torch.zeros_like(joint_pos)
-                robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=torch.where(near)[0])
+                robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=near_ids)
         
         # Monkey-patch the step to auto-close after each action
         _orig_step = env.step

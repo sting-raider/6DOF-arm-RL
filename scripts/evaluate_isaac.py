@@ -96,11 +96,11 @@ def main():
             near = dist < 0.06  # relaxed threshold
             if near.any():
                 # Write joint positions to simulation (not just data buffer)
-                joint_pos = robot.data.joint_pos.clone()
-                finger_idx = robot.data.joint_names.index("finger_joint")
-                joint_pos[near, finger_idx] = 0.785
+                near_ids = torch.where(near)[0]
+                joint_pos = robot.data.joint_pos[near_ids].clone()
+                joint_pos[:, finger_idx] = 0.785
                 joint_vel = torch.zeros_like(joint_pos)
-                robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=torch.where(near)[0])
+                robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=near_ids)
             return obs, rew, dones, info
         env.step = _step_with_auto_close
         print("  Auto-close gripper enabled for eval\n")
