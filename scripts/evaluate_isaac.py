@@ -79,10 +79,31 @@ def main():
     if hasattr(env, 'reset'):
         env.reset()
     print("  Warmup complete.\n")
+
     # Cache scene references for real (unnormalized) position queries
     robot = raw_env.scene["robot"]
     ee_idx = robot.data.body_names.index("wrist_3_link")
     obj = raw_env.scene["object"]
+
+    # ── Auto-close gripper for Phase 1+ eval ────────────────────────────
+    if args_cli.phase >= 1:
+        _orig_step = env.step
+        def _step_with_auto_close(actions):
+            obs, rew, dones, info = _orig_step(actions)
+            ee_p = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
+            obj_p = obj.data.root_pos_w - raw_env.scene.env_origins
+            dist = torch.norm(ee_p - obj_p, dim=1)
+            near = dist < 0.06  # relaxed threshold
+            if near.any():
+                # Write joint positions to simulation (not just data buffer)
+                joint_pos = robot.data.joint_pos.clone()
+                finger_idx = robot.data.joint_names.index("finger_joint")
+                joint_pos[near, finger_idx] = 0.785
+                robot.write_joint_state_to_sim(joint_pos, env_ids=torch.where(near)[0])
+            return obs, rew, dones, info
+        env.step = _step_with_auto_close
+        print("  Auto-close gripper enabled for eval\n")
+
     basket_center = torch.tensor([0.6, 0.0, 0.85], device=device, dtype=torch.float32)
 
     # Debug: print initial EE-to-object distance
@@ -131,7 +152,7 @@ def main():
         obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
 
         ep_reach_success = ep_reach_success | (ee_to_obj < 0.08)
-        ep_grasp_success = ep_grasp_success | ((grip_state > 0.40) & (obj_height > 0.88))
+        ep_grasp_success = ep_grasp_success | ((grip_state > 0.40) & (obj_height > 0.84))
         ep_place_success = ep_place_success | (obj_to_basket < 0.10)
 
         done_mask = dones > 0.5

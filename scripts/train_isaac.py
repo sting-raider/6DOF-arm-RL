@@ -174,19 +174,11 @@ def main():
             ee_pos = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
             obj_pos = obj.data.root_pos_w - raw_env.scene.env_origins
             dist = torch.norm(ee_pos - obj_pos, dim=1)
-            near = dist < 0.04
-            # Set gripper joint targets (finger_joint + 5 dependent joints)
+            near = dist < 0.06
             if near.any():
-                close_val = 0.785398163  # π/4 — fully closed
-                for jn in ["finger_joint", "right_outer_knuckle_joint",
-                           "right_inner_finger_joint"]:
-                    ji = robot.data.joint_names.index(jn)
-                    robot.data.joint_pos[near, ji] = close_val
-                for jn in ["right_inner_finger_knuckle_joint",
-                           "left_inner_finger_knuckle_joint",
-                           "left_inner_finger_joint"]:
-                    ji = robot.data.joint_names.index(jn)
-                    robot.data.joint_pos[near, ji] = -close_val
+                joint_pos = robot.data.joint_pos.clone()
+                joint_pos[near, finger_idx] = 0.785
+                robot.write_joint_state_to_sim(joint_pos, env_ids=torch.where(near)[0])
         
         # Monkey-patch the step to auto-close after each action
         _orig_step = env.step
