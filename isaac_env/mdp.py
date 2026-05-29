@@ -242,31 +242,29 @@ def reach_reward(
         return reach + bonus_8cm + bonus_5cm
 
     elif phase == 1:
-        # ── GRASP: reach (light) + grasp detection + lift reward ──
-        # Reach: keep it present but low weight — policy already knows how
-        reach = torch.exp(-ee_to_obj / 0.05) * 0.2
+        # ── GRASP: reach + close bonus + grasp + lift ──
+        # Reach: strong base — policy must stay close
+        reach = torch.exp(-ee_to_obj / 0.05) * 0.5
         
-        # Grasp detection: object is grasped if gripper is mostly closed (>50%)
-        # AND object is very close to EE (<3cm) — proxy for actual grip
+        # Close bonus: reward CLOSING the gripper when near object (bridges reach→grasp)
+        is_near = (ee_to_obj < 0.08).float()
+        gripper_velocity = robot.data.joint_vel[:, finger_idx]
+        is_closing = (gripper_velocity > 0.01).float()  # positive velocity = closing
+        close_bonus = 0.5 * is_near * is_closing
+        
+        # Grasp detection: object grasped if gripper >50% closed AND object close to EE
         is_grasping = (closedness > 0.5) & (ee_to_obj < 0.03)
         grasp_reward = is_grasping.float() * 1.0
         
-        # Lift: reward object height above table surface (table at z=0.80)
+        # Lift: reward object height above table (table at z=0.80)
         obj_z = obj_pos[:, 2]
-        table_z = 0.80
-        height_above = torch.clamp(obj_z - table_z - 0.02, 0.0, 0.10)
-        lift_shaping = (height_above / 0.08) * 2.0  # max 2.5 when 10cm up
+        height_above = torch.clamp(obj_z - 0.80 - 0.02, 0.0, 0.10)
+        lift_shaping = (height_above / 0.08) * 2.0
         
-        # Lift bonus: big reward when object is clearly lifted while grasped
+        # Lift bonus when object is clearly lifted
         lift_bonus = 2.0 * (height_above > 0.05).float() * is_grasping.float()
         
-        # Drop penalty: penalize losing grip after having it
-        was_grasping = getattr(env, '_was_grasping', torch.zeros_like(is_grasping))
-        dropped = was_grasping & (~is_grasping) & (obj_z > 0.60)  # object didn't fall off table
-        env._was_grasping = is_grasping.detach()
-        drop_penalty = -1.0 * dropped.float()
-        
-        return reach + grasp_reward + lift_shaping + lift_bonus + drop_penalty
+        return reach + close_bonus + grasp_reward + lift_shaping + lift_bonus
 
     elif phase == 2:
         # ── PLACE: Phase 1 reach+grasp + basket bonus ──
