@@ -242,10 +242,24 @@ def reach_reward(
         return reach + bonus_8cm + bonus_5cm
 
     elif phase == 1:
-        # ── GRASP: same reach reward as Phase 0 + scripted auto-close ──
-        # The policy focuses on reaching; gripper auto-closes when near.
-        # See train_isaac.py auto_close_gripper() for the script.
-        return torch.exp(-ee_to_obj / 0.10) + 2.0 * (ee_to_obj < 0.08).float() + 1.0 * (ee_to_obj < 0.05).float()
+        # ── GRASP: reach + lift reward gated on grasp ──
+        # Reach: same as Phase 0 — maintains approach behavior
+        reach = torch.exp(-ee_to_obj / 0.10) + 2.0 * (ee_to_obj < 0.08).float() + 1.0 * (ee_to_obj < 0.05).float()
+        
+        # Lift: reward when gripper closed AND object above table
+        is_grasping = (closedness > 0.4) & (ee_to_obj < 0.06)
+        obj_z = obj_pos[:, 2]
+        lift_height = torch.clamp(obj_z - 0.83, 0.0, 0.10)  # height above initial
+        lift_bonus = 2.0 * (lift_height > 0.02).float() * is_grasping.float()
+        lift_shaping = lift_height * 3.0 * is_grasping.float()  # continuous gradient
+        
+        # Drop penalty: lose grip after having it
+        was_grasping = getattr(env, '_was_grasping', torch.zeros_like(is_grasping))
+        dropped = was_grasping & (~is_grasping)
+        env._was_grasping = is_grasping.detach()
+        drop_penalty = -2.0 * dropped.float()
+        
+        return reach + lift_bonus + lift_shaping + drop_penalty
 
     elif phase == 2:
         # ── PLACE: Phase 1 reach+grasp + basket bonus ──
