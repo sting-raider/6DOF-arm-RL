@@ -178,7 +178,8 @@ def main():
             if near.any():
                 joint_pos = robot.data.joint_pos.clone()
                 joint_pos[near, finger_idx] = 0.785
-                robot.write_joint_state_to_sim(joint_pos, env_ids=torch.where(near)[0])
+                joint_vel = torch.zeros_like(joint_pos)
+                robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=torch.where(near)[0])
         
         # Monkey-patch the step to auto-close after each action
         _orig_step = env.step

@@ -99,7 +99,8 @@ def main():
                 joint_pos = robot.data.joint_pos.clone()
                 finger_idx = robot.data.joint_names.index("finger_joint")
                 joint_pos[near, finger_idx] = 0.785
-                robot.write_joint_state_to_sim(joint_pos, env_ids=torch.where(near)[0])
+                joint_vel = torch.zeros_like(joint_pos)
+                robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=torch.where(near)[0])
             return obs, rew, dones, info
         env.step = _step_with_auto_close
         print("  Auto-close gripper enabled for eval\n")
