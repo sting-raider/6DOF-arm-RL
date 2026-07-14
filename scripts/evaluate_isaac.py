@@ -113,7 +113,10 @@ argparser.add_argument(
     "--close_target",
     type=float,
     default=None,
-    help="Robotiq drive-joint close target in radians (default: 0.65)",
+    help=(
+        "Robotiq drive-joint close target in radians "
+        "(default: 0.65; --hybrid_phase1: 0.75)"
+    ),
 )
 argparser.add_argument(
     "--gripper_max_delta",
@@ -138,6 +141,16 @@ argparser.add_argument(
     type=float,
     default=10.0,
     help="Drive and inner-finger simulated effort limit (default: 10.0)",
+)
+argparser.add_argument(
+    "--freeze_arm_during_close",
+    action=argparse.BooleanOptionalAction,
+    default=None,
+    help=(
+        "Hold arm joint targets during the scripted close stage instead of "
+        "continuing Cartesian pose correction through finger contact "
+        "(default: enabled by --hybrid_phase1)."
+    ),
 )
 argparser.add_argument(
     "--close_position_tolerance",
@@ -220,6 +233,11 @@ if args_cli.gripper_effort_limit <= 0.0:
 # reproducible for normal laptop demos.
 if args_cli.hybrid_phase1:
     args_cli.scripted_grasp_cycle = True
+args_cli.freeze_arm_during_close = (
+    args_cli.hybrid_phase1
+    if args_cli.freeze_arm_during_close is None
+    else args_cli.freeze_arm_during_close
+)
 args_cli.descent_delta_z = (
     0.08 if args_cli.descent_delta_z is None else args_cli.descent_delta_z
 )
@@ -227,7 +245,7 @@ args_cli.object_size = 0.04 if args_cli.object_size is None else args_cli.object
 if args_cli.object_height is None and args_cli.hybrid_phase1:
     args_cli.object_height = 0.10
 args_cli.close_target = (
-    (0.78 if args_cli.hybrid_phase1 else 0.65)
+    (0.75 if args_cli.hybrid_phase1 else 0.65)
     if args_cli.close_target is None
     else args_cli.close_target
 )
@@ -399,6 +417,7 @@ def main():
     )
     print(f"  Gripper close target: {args_cli.close_target:.3f} rad")
     print(f"  Object contact friction: {args_cli.object_friction:.2f}")
+    print(f"  Freeze arm during close: {args_cli.freeze_arm_during_close}")
     if args_cli.scripted_retract:
         if args_cli.phase != 1:
             raise ValueError("--scripted_retract is only valid with --phase 1")
@@ -778,6 +797,12 @@ def main():
                     )
                 safe_actions[:, 6] = torch.where(gripper_closed, -1.0, 1.0)
                 if args_cli.scripted_grasp_cycle:
+                    closing = grasp_stage == 2
+                    if args_cli.freeze_arm_during_close:
+                        safe_actions[closing, :6] = 0.0
+                        servo_close_mask = torch.zeros_like(closing)
+                    else:
+                        servo_close_mask = closing
                     servo_targets = lowered_target.clone()
                     retracting = grasp_stage == 3
                     recovering = grasp_stage == 4
@@ -786,7 +811,7 @@ def main():
                     _apply_cartesian_pose_servo(
                         safe_actions,
                         servo_targets,
-                        (grasp_stage == 1) | (grasp_stage == 2),
+                        (grasp_stage == 1) | servo_close_mask,
                     )
                     _apply_cartesian_pose_servo(
                         safe_actions,
@@ -857,6 +882,7 @@ def main():
     termination_counts = {name: 0 for name in termination_names}
     episode_end_attribution = EpisodeEndAttribution()
     invalid_gripper_position_samples = []
+    invalid_gripper_linkage_samples = []
     invalid_arm_samples = []
 
     episodes_to_run = args_cli.episodes
@@ -984,6 +1010,18 @@ def main():
                     ):
                         invalid_gripper_position_samples.append(
                             raw_env._last_invalid_gripper_position[i].item()
+                        )
+                        invalid_gripper_linkage_samples.append(
+                            (
+                                raw_env._last_invalid_gripper_joint_positions[i]
+                                .detach()
+                                .cpu()
+                                .numpy(),
+                                raw_env._last_invalid_gripper_joint_velocities[i]
+                                .detach()
+                                .cpu()
+                                .numpy(),
+                            )
                         )
                     if (
                         "invalid_arm" in active_terminations
@@ -1169,6 +1207,19 @@ def main():
                         f"{finite_gripper_positions.min():.3f}/"
                         f"{np.median(finite_gripper_positions):.3f}/"
                         f"{finite_gripper_positions.max():.3f} rad"
+                    )
+                linkage_positions = np.stack(
+                    [sample[0] for sample in invalid_gripper_linkage_samples]
+                )
+                linkage_velocities = np.stack(
+                    [sample[1] for sample in invalid_gripper_linkage_samples]
+                )
+                print("  Invalid gripper linkage maxima:")
+                for joint_index, joint_name in enumerate(gripper_joint_names):
+                    print(
+                        f"    {joint_name:36s} "
+                        f"|position|={np.max(np.abs(linkage_positions[:, joint_index])):.3f} rad "
+                        f"|velocity|={np.max(np.abs(linkage_velocities[:, joint_index])):.3f} rad/s"
                     )
             if invalid_arm_samples:
                 reason_labels = (

@@ -474,7 +474,22 @@ def invalid_gripper_state(
     invalid = (~torch.isfinite(finger_pos)) | (finger_pos.abs() > max_finger_position)
     if not hasattr(env, "_last_invalid_gripper_position"):
         env._last_invalid_gripper_position = torch.zeros_like(finger_pos)
+        env._integrity_gripper_joint_ids = list(
+            range(6, len(robot.data.joint_names))
+        )
+        env._last_invalid_gripper_joint_positions = torch.zeros_like(
+            robot.data.joint_pos[:, env._integrity_gripper_joint_ids]
+        )
+        env._last_invalid_gripper_joint_velocities = torch.zeros_like(
+            robot.data.joint_vel[:, env._integrity_gripper_joint_ids]
+        )
     env._last_invalid_gripper_position[invalid] = finger_pos[invalid]
+    env._last_invalid_gripper_joint_positions[invalid] = robot.data.joint_pos[
+        invalid
+    ][:, env._integrity_gripper_joint_ids]
+    env._last_invalid_gripper_joint_velocities[invalid] = robot.data.joint_vel[
+        invalid
+    ][:, env._integrity_gripper_joint_ids]
     return invalid
 
 

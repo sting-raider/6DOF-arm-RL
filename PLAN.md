@@ -30,8 +30,10 @@ Last updated: 2026-07-14
 - [x] Reject damping and effort changes that trade safety for misleading lifts.
 - [x] Attribute integrity resets to exact grasp stages and successful/failed
   episodes.
-- [ ] Isolate the 2F-85 mimic-linkage explosion in a one-environment contact
-  probe before changing more controller gains or targets.
+- [x] Isolate free closure, object contact, and table clearance in a
+  physics-step contact probe.
+- [x] Decouple arm pose correction from finger closure, reducing gripper
+  integrity resets to 1/128 across the two established seeds.
 - [ ] Prevent mechanically invalid finger overshoot without reducing strict lift.
 - [ ] Reduce combined arm/gripper integrity terminations below 2% in the nominal
   starter-object benchmark.
@@ -43,7 +45,8 @@ Last updated: 2026-07-14
 - [x] Separate learned reaching from deterministic descend/close/retract control.
 - [x] Add full-pose damped-least-squares control.
 - [x] Add slip detection and one bounded, midpoint-corrected regrasp.
-- [x] Reach 78/128 (60.9%) strict lifts across two seeds.
+- [x] Benchmark the contact-safe preset at 76/128 (59.4%) strict lifts across
+  two seeds.
 - [ ] Move the hybrid state machine out of `scripts/evaluate_isaac.py` into a
   reusable controller module.
 - [ ] Make training evaluation, visual demos, and future deployment use the same

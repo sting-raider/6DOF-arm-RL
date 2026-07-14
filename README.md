@@ -14,12 +14,16 @@ is stable.
 | Stage | Verified result | Status |
 |---|---:|---|
 | Phase 0: reach | 256/256 within 5 cm; 7 mm median closest distance | Complete |
-| Phase 1: hybrid grasp | 78/128 strict lifts (60.9%) across two seeds | In progress |
+| Phase 1: hybrid grasp | 76/128 strict lifts (59.4%) across two seeds | In progress |
 | Four-arm fixed layout | 4/4 reached; 2/4 lifted | Visual smoke test |
 | Phase 2: place | Not implemented | Blocked on reliable grasping |
 
 The Phase 1 benchmark uses a 4 x 4 x 10 cm upright block. The original 4 cm
 cube is not yet reliable because its usable finger-contact band is much smaller.
+The current contact-safe preset pauses arm pose correction while the fingers
+close. It recorded zero gripper-integrity resets on seed 42 and one across both
+seeds, down from 19 on seed 42 with the previous preset. Twelve remaining arm
+resets were isolated to wrist-2 wrap during corrective-retry recovery.
 The current Phase 1 exit target is at least 80% strict lift success with low
 integrity-reset rates and a stable two-second hold.
 
@@ -197,9 +201,10 @@ tracker behavior. Contact dynamics still require an Isaac evaluation run.
 
 ## Known limitations
 
-- Phase 1 succeeds on 60.9% of the current starter-object benchmark, not at a
+- Phase 1 succeeds on 59.4% of the current starter-object benchmark, not at a
   production-ready rate.
-- Gripper and arm integrity resets remain the main simulator failure mode.
+- Gripper contact is stable in the nominal preset; retry-recovery wrist wrap is
+  now the main integrity failure mode.
 - The raw RGB detector and camera calibration pipeline are not connected yet.
 - The 4 cm cube and varied object shapes are not reliable.
 - Transport, release, and basket placement are not implemented.

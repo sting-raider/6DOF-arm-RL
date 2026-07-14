@@ -48,20 +48,53 @@ Each row changed one setting from the deterministic seed-42 baseline.
 | Hold the gripper target after strict lift | 36/64 | 18 | 2 | Reject: reduced lift |
 | Close target 0.75 rad | 40/64 | 23 | 6 | Reject: less stable |
 | Gripper slew 0.005 rad/physics tick | 34/64 | 20 | 5 | Reject |
+| Freeze arm during close, target 0.78 rad | 36/64 | 0 | 5 | Reject: reduced lift |
+| Freeze arm during close, target 0.75 rad | 37/64 | 0 | 3 | Keep |
+| Position-only retry recovery on kept close preset | 34/64 | 1 | 3 | Reject |
 
 The external-force setting produced the worst finger excursion, reaching
 -60.539 rad. The 0.75 rad close target improved lift count but increased both
 integrity terms, so it is not a safe new preset.
 
+## Physics-step contact probe
+
+`probe_linkage.py` runs free closure, static object contact, and production-
+relative table clearance side by side at one observation per PhysX step. All
+three scenarios remained finite for 120 close steps. Free and table-clearance
+closure reached the 0.78 rad command. The object-contact drive joint stopped at
+0.584 rad, demonstrating that the cube was physically blocking the fingers
+without destabilizing the linkage.
+
+The probe also confirmed hard arm limits of +/-6.283 rad for wrist 2. The
+roughly 12.1 rad values attributed during recovery are consistent with
+continuous-coordinate wrap rather than the configured hard-limit value.
+
+## Kept preset
+
+Pausing Cartesian arm correction during finger closure and lowering the close
+target to 0.75 rad became the hybrid default. The exact default produced:
+
+| Seed | Strict lifts | Gripper resets | Arm resets |
+|---:|---:|---:|---:|
+| 42 | 37/64 | 0 | 3 |
+| 19595 | 39/64 | 1 | 9 |
+| Combined | 76/128 (59.4%) | 1/128 (0.8%) | 12/128 (9.4%) |
+
+This trades two strict lifts versus the previous 78/128 result for a much
+safer contact path. It does not satisfy the overall integrity gate because the
+retry recovery controller still winds wrist 2 after successful lifts.
+The sole remaining gripper reset occurred during descent before any close: the
+drive reached 1.942 rad while the left inner-finger velocity peaked at 84.9
+rad/s. It is therefore distinct from the nominal static-contact path.
+
 ## Verdict
 
 Aggregate integrity counts previously mixed failed grasps with post-success
-hold/recovery instability. The gripper problem is nevertheless genuine: the
-stock mimic linkage can leave its mechanical range by several radians during
-contact. Small target, effort, damping, slew, and solver-force adjustments have
-not fixed it without another regression.
+hold/recovery instability. Static closure and object contact are stable; the
+explosion was observed only with simultaneous arm servo motion through contact.
+Decoupling those actions nearly eliminates the gripper failure without
+retraining.
 
-The next experiment should isolate the Robotiq linkage in one environment and
-compare free closure, object contact, and table contact while recording every
-linked joint at physics-step resolution. Do not spend cloud GPU time or retrain
-Phase 0 for this issue.
+The next contact-stability task is wrist-aware retry recovery. It should prevent
+continuous-coordinate wrap without changing the successful first-attempt
+trajectory. Do not spend cloud GPU time or retrain Phase 0 for this issue.

@@ -16,6 +16,7 @@ def test_repo_structure():
         "isaac_env/evaluation_metrics.py",
         "scripts/train_isaac.py",
         "scripts/evaluate_isaac.py",
+        "spikes/004-contact-stability/probe_linkage.py",
         "requirements.txt",
     ]
     for path in required:
@@ -31,6 +32,7 @@ def test_python_syntax():
         "isaac_env/evaluation_metrics.py",
         "scripts/train_isaac.py",
         "scripts/evaluate_isaac.py",
+        "spikes/004-contact-stability/probe_linkage.py",
     ]:
         with open(path, "r") as f:
             src = f.read()
