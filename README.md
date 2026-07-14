@@ -1,77 +1,163 @@
-# 6-DOF Arm Pick-and-Place
+# 6-DOF arm pick-and-place
 
-Laptop-first manipulation research with Isaac Lab, a UR10e arm, a Robotiq
-2F-85 gripper, and RSL-RL PPO.
+An Isaac Lab project for reaching and grasping objects with a UR10e arm and a
+Robotiq 2F-85 gripper.
 
-The current working system combines a learned, target-conditioned reaching
-policy with a deterministic 6-DOF pose controller for descend, close, and
-retract. This hybrid is cheaper and easier to debug than asking PPO to discover
-the entire contact sequence from scratch.
+The current controller is hybrid: PPO moves the wrist to a target-conditioned
+pre-grasp pose, then a deterministic 6-DOF pose servo handles descent, gripper
+closure, lift, and one corrective retry. This keeps contact behavior observable
+and avoids training an end-to-end manipulation policy before the simulator setup
+is stable.
 
-## Current status
+## Project status
 
-| Capability | Result | Checkpoint / path |
+| Stage | Verified result | Status |
 |---|---:|---|
-| Phase 0 reach, strict 256-episode test | 100% at 5/6/8 cm | `models/isaac/phase_0/model_pregrasp_coupled_v2.pt` |
-| Phase 0 median closest distance | 7 mm | same checkpoint |
-| Phase 0 shuffled-target control | degrades sharply | confirms target conditioning |
-| Hybrid Phase 1 lift, two 64-episode seeds | 78/128 (60.9%) | `models/isaac/phase_1/model_grasp_v1.pt` |
-| Four-arm fixed-layout smoke test | 4/4 reach, 4/4 grasp-cycle entry, 2/4 strict lift | `--demo_layout` |
-| Phase 0 with static 3 cm X + 3 cm Y target bias | 64/64 at 5 cm | `--target_obs_mode noisy` |
-| Phase 0 with static 5 cm X + 5 cm Y target bias | 19/64 at 5 cm | calibration failure control |
-| Phase 2 place | not started | depends on a reliable grasp |
+| Phase 0: reach | 256/256 within 5 cm; 7 mm median closest distance | Complete |
+| Phase 1: hybrid grasp | 78/128 strict lifts (60.9%) across two seeds | In progress |
+| Four-arm fixed layout | 4/4 reached; 2/4 lifted | Visual smoke test |
+| Phase 2: place | Not implemented | Blocked on reliable grasping |
 
-The Phase 1 result includes one bounded, midpoint-corrected regrasp and uses a
-4 x 4 x 10 cm upright starter object. The original
-4 cm cube has a very narrow vertical contact band and is not yet reliable.
+The Phase 1 benchmark uses a 4 x 4 x 10 cm upright block. The original 4 cm
+cube is not yet reliable because its usable finger-contact band is much smaller.
+The current Phase 1 exit target is at least 80% strict lift success with low
+integrity-reset rates and a stable two-second hold.
 
-## What the policy sees
+Model files are intentionally excluded from Git because they are binary
+artifacts. The result paths used during development were:
 
-The current checkpoint does **not** consume raw video. In simulation, Isaac
-provides the object's 3D centroid directly. The 34D policy observation is:
+- `models/isaac/phase_0/model_pregrasp_coupled_v2.pt`
+- `models/isaac/phase_1/model_grasp_v1.pt`
 
-| Component | Dim | Description |
-|---|---:|---|
-| arm joint positions | 6 | six active UR10e joints |
-| arm joint velocities | 6 | six active UR10e joints |
-| wrist position | 3 | local Cartesian position |
-| wrist orientation | 4 | quaternion |
-| gripper state | 1 | Robotiq drive-joint state |
-| object position | 3 | target centroid; simulator truth for now |
-| wrist-to-target vector | 3 | relative target position |
-| target distance | 1 | scalar distance |
-| previous action | 7 | six arm commands plus gripper command |
-| **Total** | **34** | |
+A fresh clone does not contain these checkpoints. Train them locally or copy
+compatible checkpoints into those paths before running the evaluation commands.
 
-The real-world design replaces only the simulator's object-position channel:
+## How it works
 
 ```text
-camera frame -> object detector / pose estimate -> target XYZ
-                                                   |
-robot joint feedback ------------------------------+-> reach policy
-                                                        |
-                                                        v
-                                      pose servo -> close -> retract
+object XYZ + robot state -> learned pre-grasp policy
+                                  |
+                                  v
+                    pose servo -> close -> lift
+                                      |
+                                      +-> recenter and retry once if needed
 ```
 
-Robot joint feedback is still required for closed-loop control, but it normally
-comes from the robot itself and is not a separate camera or training expense.
-A camera-only raw-video-to-motor policy would cost more data, be harder to debug,
-and transfer less reliably.
+The trained policy currently receives structured state, not video. Its 34-value
+observation contains:
 
-`isaac_env/target_provider.py` now defines the camera-independent estimate
-contract and rejects low-confidence, stale, out-of-workspace, non-finite, or
-implausibly jumping detections. The policy remained perfect at the 5 cm reach
-criterion with a static 3 cm bias on both X and Y, but fell to 30% with 5 cm bias
-on both axes. The grasping target is therefore about 1 cm calibrated accuracy,
-with 3 cm treated as the outer reach-only bound.
+| Input | Values |
+|---|---:|
+| Six arm joint positions and velocities | 12 |
+| Wrist position and quaternion | 7 |
+| Gripper state | 1 |
+| Object position, relative vector, and distance | 7 |
+| Previous action | 7 |
+| **Total** | **34** |
 
-## Run the validated laptop demo
+For a future physical setup, a camera detector will replace the simulator's
+object-position source. Robot joint feedback will still come from the robot and
+remain part of closed-loop control. The repository already contains a target
+tracker that rejects stale, low-confidence, non-finite, out-of-workspace, and
+implausibly jumping detections.
 
-These commands are for the existing Windows workspace and virtual environment.
-The renderer flags select the stable D3D path on this laptop.
+Camera-position perturbation tests produced these Phase 0 results:
 
-Headless 64-arm benchmark:
+| Synthetic calibration error | Reach success within 5 cm |
+|---|---:|
+| Static +3 cm on X and +3 cm on Y | 64/64 |
+| Static +5 cm on X and +5 cm on Y | 19/64 |
+
+This suggests that 3 cm is an outer reach-only bound. Grasping a 4 cm-wide
+object will require substantially better calibration; the current engineering
+target is approximately 1 cm persistent position error.
+
+## Repository layout
+
+```text
+isaac_env/
+  actions.py           bounded arm and slew-limited gripper actions
+  env_cfg.py           Isaac Lab scene and manager configuration
+  mdp.py               observations, rewards, resets, and terminations
+  target_provider.py   camera-independent target validation and smoothing
+scripts/
+  train_isaac.py       PPO training and warm-start entry point
+  evaluate_isaac.py    evaluation, ablations, and hybrid grasp demo
+spikes/                recorded diagnostic experiments and conclusions
+tests/                 hardware-independent smoke tests
+PLAN.md                ordered roadmap and completion gates
+```
+
+## Setup
+
+The current results were produced on:
+
+- Windows 11
+- Python 3.11.9
+- Isaac Sim 5.1.0
+- PyTorch 2.7.0 with CUDA 12.8
+- NVIDIA RTX 3060 Laptop GPU with 6 GB VRAM
+
+Isaac Sim, Isaac Lab, and RSL-RL are external dependencies and are not installed
+by this repository's `requirements.txt`. Set up an Isaac Lab environment first.
+The project was tested with the official
+[Isaac Sim 5.1 pip installation workflow](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/pip_installation.html)
+and Python 3.11.
+
+After activating that environment:
+
+```powershell
+git clone https://github.com/sting-raider/6DOF-arm-RL.git
+cd 6DOF-arm-RL
+python -m pip install -r requirements.txt
+```
+
+The local development checkout uses `.venv\Scripts\python.exe`. Substitute the
+Python executable from your Isaac Lab environment if yours has a different name.
+
+## Train
+
+Phase 0 training:
+
+```powershell
+$env:OMNI_KIT_ACCEPT_EULA='YES'
+.\.venv\Scripts\python.exe scripts\train_isaac.py `
+  --phase 0 --num_envs 512 --max_iterations 1000 --headless `
+  --output_model models\isaac\phase_0\model.pt
+```
+
+Warm-starting transfers the actor and its observation normalizer while leaving
+the Phase 1 critic and optimizer fresh:
+
+```powershell
+$env:OMNI_KIT_ACCEPT_EULA='YES'
+.\.venv\Scripts\python.exe scripts\train_isaac.py `
+  --phase 1 --num_envs 512 --max_iterations 100 --headless `
+  --warm_start models\isaac\phase_0\model.pt `
+  --output_model models\isaac\phase_1\model.pt
+```
+
+Phase 0 does not need to be retrained for the current development checkpoint.
+Use the cloud GPU only after local deterministic control reaches a measured
+plateau; the roadmap limits any cloud run to a small residual correction policy.
+
+## Evaluate
+
+The following commands assume the development checkpoints exist at the paths
+shown near the top of this README.
+
+Phase 0 regression:
+
+```powershell
+$env:OMNI_KIT_ACCEPT_EULA='YES'
+.\.venv\Scripts\python.exe -u scripts\evaluate_isaac.py `
+  --phase 0 `
+  --model models\isaac\phase_0\model_pregrasp_coupled_v2.pt `
+  --num_envs 256 --episodes 256 --headless `
+  --kit_args "--/app/vulkan=false --/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false"
+```
+
+Hybrid Phase 1 benchmark:
 
 ```powershell
 $env:OMNI_KIT_ACCEPT_EULA='YES'
@@ -83,7 +169,7 @@ $env:OMNI_KIT_ACCEPT_EULA='YES'
   --kit_args "--/app/vulkan=false --/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false"
 ```
 
-Visible four-arm demo with a different object position for each arm:
+Visible four-arm demo:
 
 ```powershell
 $env:OMNI_KIT_ACCEPT_EULA='YES'
@@ -95,60 +181,34 @@ $env:OMNI_KIT_ACCEPT_EULA='YES'
   --kit_args "--/app/vulkan=false --/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false"
 ```
 
-Phase 0 regression benchmark:
-
-```powershell
-$env:OMNI_KIT_ACCEPT_EULA='YES'
-.\.venv\Scripts\python.exe -u scripts\evaluate_isaac.py `
-  --phase 0 `
-  --model models\isaac\phase_0\model_pregrasp_coupled_v2.pt `
-  --num_envs 256 --episodes 256 --headless `
-  --kit_args "--/app/vulkan=false --/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false"
-```
-
-## Training
-
-Phase 0 does not need to be retrained before continuing. If a later experiment
-does need PPO, warm-start only the actor and observation normalizer so the critic
-and optimizer start cleanly:
-
-```powershell
-$env:OMNI_KIT_ACCEPT_EULA='YES'
-.\.venv\Scripts\python.exe scripts\train_isaac.py `
-  --phase 1 --num_envs 512 --max_iterations 100 --headless `
-  --warm_start models\isaac\phase_0\model_pregrasp_coupled_v2.pt `
-  --output_model models\isaac\phase_1\model_grasp_v1.pt
-```
-
-Use 256-512 environments for laptop experiments. The four-hour cloud GPU should
-be reserved for a final residual-policy or domain-randomization run after the
-local controller and camera adapter pass their tests.
-
-## Why this will not translate perfectly by itself
-
-Isaac validates control logic and contact hypotheses; it cannot guarantee a
-perfect real-world transfer. Remaining gaps include camera calibration and
-occlusion, object-pose error, unknown friction and mass, gripper compliance,
-latency, and robot-specific safety limits. The low-cost transfer plan is:
-
-1. keep the proven reach policy;
-2. add a replaceable camera-to-target adapter with noise/confidence handling;
-3. test that adapter against synthetic perturbations locally;
-4. improve the midpoint-corrected regrasp beyond its current 61% lift rate;
-5. use a short randomized residual-policy run only if the controller plateaus;
-6. start Phase 2 only after grasp success is consistently high.
+The D3D renderer flags above are required by the tested Windows laptop setup.
+They may not be appropriate on Linux or a different GPU configuration.
 
 ## Tests
 
-The fast tests do not launch Isaac Sim:
+The fast suite does not launch Isaac Sim:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-Physical behavior must also be verified with `scripts/evaluate_isaac.py`; syntax
-and smoke tests alone cannot validate contact dynamics.
+It checks repository structure, Python syntax, configuration parsing, and target
+tracker behavior. Contact dynamics still require an Isaac evaluation run.
+
+## Known limitations
+
+- Phase 1 succeeds on 60.9% of the current starter-object benchmark, not at a
+  production-ready rate.
+- Gripper and arm integrity resets remain the main simulator failure mode.
+- The raw RGB detector and camera calibration pipeline are not connected yet.
+- The 4 cm cube and varied object shapes are not reliable.
+- Transport, release, and basket placement are not implemented.
+- Simulation results do not demonstrate real-world safety or transfer.
+
+See [PLAN.md](PLAN.md) for the ordered milestones and completion criteria. The
+diagnostic evidence behind the current decisions is recorded under
+[`spikes/`](spikes/).
 
 ## License
 
-MIT. See `LICENSE` if present in the distribution.
+Released under the [MIT License](LICENSE).
