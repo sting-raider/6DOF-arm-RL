@@ -28,8 +28,10 @@ Last updated: 2026-07-14
 - [x] Verify the simulated Robotiq linkage and physical colliders.
 - [x] Instrument individual timeout, object, arm, and gripper termination terms.
 - [x] Reject damping and effort changes that trade safety for misleading lifts.
-- [ ] Attribute integrity resets to exact grasp stages and successful/failed
+- [x] Attribute integrity resets to exact grasp stages and successful/failed
   episodes.
+- [ ] Isolate the 2F-85 mimic-linkage explosion in a one-environment contact
+  probe before changing more controller gains or targets.
 - [ ] Prevent mechanically invalid finger overshoot without reducing strict lift.
 - [ ] Reduce combined arm/gripper integrity terminations below 2% in the nominal
   starter-object benchmark.

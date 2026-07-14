@@ -4,6 +4,7 @@ import ast
 import yaml
 
 from isaac_env.target_provider import TargetEstimate, TargetTracker
+from isaac_env.evaluation_metrics import EpisodeEndAttribution, grasp_stage_label
 
 
 def test_repo_structure():
@@ -12,6 +13,7 @@ def test_repo_structure():
         "isaac_env/mdp.py",
         "isaac_env/actions.py",
         "isaac_env/target_provider.py",
+        "isaac_env/evaluation_metrics.py",
         "scripts/train_isaac.py",
         "scripts/evaluate_isaac.py",
         "requirements.txt",
@@ -26,6 +28,7 @@ def test_python_syntax():
         "isaac_env/mdp.py",
         "isaac_env/actions.py",
         "isaac_env/target_provider.py",
+        "isaac_env/evaluation_metrics.py",
         "scripts/train_isaac.py",
         "scripts/evaluate_isaac.py",
     ]:
@@ -94,6 +97,41 @@ def test_target_tracker_rejects_workspace_and_jump_outliers():
     )
     assert not outside.valid and outside.reason == "outside_workspace"
     assert jump.valid and jump.reason == "held_after_implausible_jump"
+
+
+def test_episode_end_attribution_groups_stage_attempts_and_outcomes():
+    attribution = EpisodeEndAttribution()
+    attribution.record(
+        ("invalid_arm", "invalid_gripper"),
+        stage=3,
+        attempts_completed=1,
+        successful=False,
+    )
+    attribution.record(
+        ("invalid_gripper",),
+        stage=3,
+        attempts_completed=1,
+        successful=True,
+    )
+    attribution.record(
+        ("time_out",),
+        stage=4,
+        attempts_completed=1,
+        successful=False,
+    )
+
+    rows = attribution.rows(("invalid_arm", "invalid_gripper"))
+    assert [(row.termination, row.stage, row.total) for row in rows] == [
+        ("invalid_arm", "retract", 1),
+        ("invalid_gripper", "retract", 2),
+    ]
+    assert rows[0].successful == 0 and rows[0].failed == 1
+    assert rows[1].successful == 1 and rows[1].failed == 1
+
+
+def test_grasp_stage_label_survives_unknown_diagnostic_value():
+    assert grasp_stage_label(1) == "descend"
+    assert grasp_stage_label(99) == "unknown(99)"
 
 
 if __name__ == "__main__":

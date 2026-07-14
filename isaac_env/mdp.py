@@ -416,12 +416,50 @@ def invalid_arm_state(
 
     arm_pos = robot.data.joint_pos[:, env._integrity_arm_joint_ids]
     arm_vel = robot.data.joint_vel[:, env._integrity_arm_joint_ids]
-    return (
-        (~torch.isfinite(arm_pos)).any(dim=1)
-        | (~torch.isfinite(arm_vel)).any(dim=1)
-        | (arm_pos.abs() > max_arm_position).any(dim=1)
-        | (arm_vel.abs() > max_arm_velocity).any(dim=1)
+    nonfinite_position = (~torch.isfinite(arm_pos)).any(dim=1)
+    nonfinite_velocity = (~torch.isfinite(arm_vel)).any(dim=1)
+    excessive_position = (arm_pos.abs() > max_arm_position).any(dim=1)
+    excessive_velocity = (arm_vel.abs() > max_arm_velocity).any(dim=1)
+    invalid = (
+        nonfinite_position
+        | nonfinite_velocity
+        | excessive_position
+        | excessive_velocity
     )
+
+    # Preserve the pre-reset cause for evaluation diagnostics. Manager-based
+    # environments reset completed slots inside ``step``, so reading joint data
+    # afterward would otherwise report the new episode's initial state.
+    if not hasattr(env, "_last_invalid_arm_reason"):
+        env._last_invalid_arm_reason = torch.zeros(
+            arm_pos.shape[0], dtype=torch.uint8, device=arm_pos.device
+        )
+        env._last_invalid_arm_max_position = torch.zeros(
+            arm_pos.shape[0], dtype=arm_pos.dtype, device=arm_pos.device
+        )
+        env._last_invalid_arm_max_velocity = torch.zeros(
+            arm_vel.shape[0], dtype=arm_vel.dtype, device=arm_vel.device
+        )
+        env._last_invalid_arm_peak_joint = torch.zeros(
+            arm_pos.shape[0], dtype=torch.long, device=arm_pos.device
+        )
+    reason = (
+        nonfinite_position.to(torch.uint8)
+        | (nonfinite_velocity.to(torch.uint8) << 1)
+        | (excessive_position.to(torch.uint8) << 2)
+        | (excessive_velocity.to(torch.uint8) << 3)
+    )
+    env._last_invalid_arm_reason[invalid] = reason[invalid]
+    env._last_invalid_arm_max_position[invalid] = torch.nan_to_num(
+        arm_pos[invalid].abs(), nan=torch.inf, posinf=torch.inf, neginf=torch.inf
+    ).amax(dim=1)
+    env._last_invalid_arm_max_velocity[invalid] = torch.nan_to_num(
+        arm_vel[invalid].abs(), nan=torch.inf, posinf=torch.inf, neginf=torch.inf
+    ).amax(dim=1)
+    env._last_invalid_arm_peak_joint[invalid] = torch.nan_to_num(
+        arm_pos[invalid].abs(), nan=torch.inf, posinf=torch.inf, neginf=torch.inf
+    ).argmax(dim=1)
+    return invalid
 
 
 def invalid_gripper_state(
@@ -433,7 +471,11 @@ def invalid_gripper_state(
     if not hasattr(env, "_integrity_finger_joint_id"):
         env._integrity_finger_joint_id = robot.data.joint_names.index("finger_joint")
     finger_pos = robot.data.joint_pos[:, env._integrity_finger_joint_id]
-    return (~torch.isfinite(finger_pos)) | (finger_pos.abs() > max_finger_position)
+    invalid = (~torch.isfinite(finger_pos)) | (finger_pos.abs() > max_finger_position)
+    if not hasattr(env, "_last_invalid_gripper_position"):
+        env._last_invalid_gripper_position = torch.zeros_like(finger_pos)
+    env._last_invalid_gripper_position[invalid] = finger_pos[invalid]
+    return invalid
 
 
 def invalid_object_state(

@@ -16,6 +16,7 @@ if os.name == "nt":
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from isaac_env.evaluation_metrics import EpisodeEndAttribution
 from isaaclab.app import AppLauncher
 
 argparser = argparse.ArgumentParser()
@@ -581,6 +582,12 @@ def main():
         grasp_attempts = torch.zeros(
             args_cli.num_envs, dtype=torch.long, device=device
         )
+        completed_grasp_stage = torch.zeros(
+            args_cli.num_envs, dtype=torch.long, device=device
+        )
+        completed_grasp_attempts = torch.zeros(
+            args_cli.num_envs, dtype=torch.long, device=device
+        )
         grasp_target_correction = torch.zeros(
             (args_cli.num_envs, 3), dtype=torch.float32, device=device
         )
@@ -792,14 +799,21 @@ def main():
                         servo_targets,
                         recovering,
                     )
+            # Isaac resets completed environments inside ``step``. Preserve the
+            # controller state responsible for the ending before clearing it.
+            stage_when_stepping = grasp_stage.clone()
+            attempts_when_stepping = grasp_attempts.clone()
             obs, rew, dones, info = _orig_step(safe_actions)
+            done_mask = dones.bool()
+            completed_grasp_stage[done_mask] = stage_when_stepping[done_mask]
+            completed_grasp_attempts[done_mask] = attempts_when_stepping[done_mask]
             grasp_stage_steps.add_(1)
-            gripper_closed[dones.bool()] = False
-            grasp_stage[dones.bool()] = 0
-            grasp_stage_steps[dones.bool()] = 0
-            grasp_attempts[dones.bool()] = 0
-            grasp_target_correction[dones.bool()] = (
-                initial_grasp_target_correction[dones.bool()]
+            gripper_closed[done_mask] = False
+            grasp_stage[done_mask] = 0
+            grasp_stage_steps[done_mask] = 0
+            grasp_attempts[done_mask] = 0
+            grasp_target_correction[done_mask] = (
+                initial_grasp_target_correction[done_mask]
             )
             return obs, rew, dones, info
 
@@ -841,6 +855,9 @@ def main():
     finger_separation_max_samples = []
     termination_names = tuple(raw_env.termination_manager.active_terms)
     termination_counts = {name: 0 for name in termination_names}
+    episode_end_attribution = EpisodeEndAttribution()
+    invalid_gripper_position_samples = []
+    invalid_arm_samples = []
 
     episodes_to_run = args_cli.episodes
     episodes_done = 0
@@ -888,11 +905,13 @@ def main():
             actions = inference_policy(policy_obs)
         obs, rew, dones, infos = env.step(actions)
         done_now = dones > 0.5
+        active_terminations = {}
         if torch.any(done_now):
             for term_name in termination_names:
                 term_values = raw_env.termination_manager.get_term(term_name)
+                active_terminations[term_name] = term_values & done_now
                 termination_counts[term_name] += int(
-                    (term_values & done_now).sum().item()
+                    active_terminations[term_name].sum().item()
                 )
         if args_cli.realtime:
             step_budget = raw_env.step_dt
@@ -958,6 +977,36 @@ def main():
         done_mask = dones > 0.5
         for i in range(num_envs):
             if done_mask[i]:
+                if args_cli.phase == 1 and args_cli.scripted_grasp_cycle:
+                    if (
+                        "invalid_gripper" in active_terminations
+                        and bool(active_terminations["invalid_gripper"][i].item())
+                    ):
+                        invalid_gripper_position_samples.append(
+                            raw_env._last_invalid_gripper_position[i].item()
+                        )
+                    if (
+                        "invalid_arm" in active_terminations
+                        and bool(active_terminations["invalid_arm"][i].item())
+                    ):
+                        invalid_arm_samples.append(
+                            (
+                                int(raw_env._last_invalid_arm_reason[i].item()),
+                                raw_env._last_invalid_arm_max_position[i].item(),
+                                raw_env._last_invalid_arm_max_velocity[i].item(),
+                                int(raw_env._last_invalid_arm_peak_joint[i].item()),
+                            )
+                        )
+                    episode_end_attribution.record(
+                        (
+                            term_name
+                            for term_name, term_values in active_terminations.items()
+                            if bool(term_values[i].item())
+                        ),
+                        stage=int(completed_grasp_stage[i].item()),
+                        attempts_completed=int(completed_grasp_attempts[i].item()),
+                        successful=bool(ep_grasp_success[i].item()),
+                    )
                 rewards.append(ep_reward[i].item())
                 ep_lengths.append(ep_steps[i].item())
                 episode_min_distance = ep_min_distance[i].item()
@@ -1087,6 +1136,86 @@ def main():
                     f"dx={midpoint_error_median[0]:+.3f}, "
                     f"dy={midpoint_error_median[1]:+.3f}, "
                     f"dz={midpoint_error_median[2]:+.3f} m"
+                )
+            integrity_rows = episode_end_attribution.rows(
+                ("invalid_arm", "invalid_gripper", "invalid_object")
+            )
+            print("  Integrity reset attribution:")
+            if integrity_rows:
+                for row in integrity_rows:
+                    print(
+                        f"    {row.termination:16s} stage={row.stage:8s} "
+                        f"closes={row.attempts_completed} total={row.total} "
+                        f"successful={row.successful} failed={row.failed}"
+                    )
+            else:
+                print("    none")
+            if invalid_gripper_position_samples:
+                finite_gripper_positions = np.asarray(
+                    [
+                        value
+                        for value in invalid_gripper_position_samples
+                        if np.isfinite(value)
+                    ]
+                )
+                print(
+                    "  Invalid gripper position samples: "
+                    f"finite={len(finite_gripper_positions)}/"
+                    f"{len(invalid_gripper_position_samples)}"
+                )
+                if len(finite_gripper_positions):
+                    print(
+                        "    min/median/max="
+                        f"{finite_gripper_positions.min():.3f}/"
+                        f"{np.median(finite_gripper_positions):.3f}/"
+                        f"{finite_gripper_positions.max():.3f} rad"
+                    )
+            if invalid_arm_samples:
+                reason_labels = (
+                    (1, "nonfinite_position"),
+                    (2, "nonfinite_velocity"),
+                    (4, "excessive_position"),
+                    (8, "excessive_velocity"),
+                )
+                print("  Invalid arm causes:")
+                for reason_bit, reason_label in reason_labels:
+                    count = sum(
+                        1 for reason, _, _, _ in invalid_arm_samples
+                        if reason & reason_bit
+                    )
+                    if count:
+                        print(f"    {reason_label}={count}")
+                arm_positions = np.asarray(
+                    [sample[1] for sample in invalid_arm_samples]
+                )
+                arm_velocities = np.asarray(
+                    [sample[2] for sample in invalid_arm_samples]
+                )
+                peak_joint_counts = {}
+                for _, _, _, peak_joint_index in invalid_arm_samples:
+                    joint_id = raw_env._integrity_arm_joint_ids[peak_joint_index]
+                    joint_name = robot.data.joint_names[joint_id]
+                    peak_joint_counts[joint_name] = (
+                        peak_joint_counts.get(joint_name, 0) + 1
+                    )
+                print(
+                    "    peak position joints="
+                    + ", ".join(
+                        f"{name}:{count}"
+                        for name, count in sorted(peak_joint_counts.items())
+                    )
+                )
+                print(
+                    "    max |position| min/median/max="
+                    f"{arm_positions.min():.3f}/"
+                    f"{np.median(arm_positions):.3f}/"
+                    f"{arm_positions.max():.3f} rad"
+                )
+                print(
+                    "    max |velocity| min/median/max="
+                    f"{arm_velocities.min():.3f}/"
+                    f"{np.median(arm_velocities):.3f}/"
+                    f"{arm_velocities.max():.3f} rad/s"
                 )
     if phase >= 2:
         print(f"  Place success:      {successes['place']}/{successes['total_eps']} "
