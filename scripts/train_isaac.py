@@ -35,9 +35,27 @@ argparser.add_argument("--max_iterations", type=int, default=1000,
                        help="Maximum training iterations")
 argparser.add_argument("--checkpoint", type=str, default=None,
                        help="Resume from checkpoint")
+argparser.add_argument(
+    "--warm_start",
+    type=str,
+    default=None,
+    help=(
+        "Initialize only the actor and its observation normalizer from another "
+        "phase; critic, optimizer, and iteration count start fresh"
+    ),
+)
+argparser.add_argument(
+    "--output_model",
+    type=str,
+    default=None,
+    help="Final checkpoint path (defaults to models/isaac/phase_N/model.pt)",
+)
+argparser.add_argument("--seed", type=int, default=42, help="Environment random seed")
 
 AppLauncher.add_app_launcher_args(argparser)
 args_cli = argparser.parse_args()
+if args_cli.checkpoint and args_cli.warm_start:
+    argparser.error("--checkpoint and --warm_start are mutually exclusive")
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
@@ -52,6 +70,7 @@ from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 from rsl_rl.runners import OnPolicyRunner
 
 from isaac_env.env_cfg import PickPlaceEnvCfg
+from isaac_env.mdp import DESIRED_WRIST_QUAT, GRASP_TARGET_OFFSET
 
 # Config
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -75,11 +94,12 @@ def main():
     env_cfg.curriculum_phase = args_cli.phase
     env_cfg.scene.num_envs = args_cli.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device else "cuda:0"
+    env_cfg.seed = args_cli.seed
 
-    env = ManagerBasedRLEnv(cfg=env_cfg)
+    raw_env = ManagerBasedRLEnv(cfg=env_cfg)
 
     # ── Wrap for RSL-RL ──────────────────────────────────────────────────
-    env = RslRlVecEnvWrapper(env)
+    env = RslRlVecEnvWrapper(raw_env, clip_actions=1.0)
 
     # ── PPO config ───────────────────────────────────────────────────────
     log_root = os.path.join("logs", "isaac", f"phase_{args_cli.phase}")
@@ -103,6 +123,8 @@ def main():
             "desired_kl": 0.01,
             "entropy_coef": 0.003,   # moderate — enough exploration for tight threshold
             "max_grad_norm": 1.0,
+            "use_clipped_value_loss": True,
+            "schedule": "adaptive",
             "rnd_cfg": None,
         },
         "runner": {
@@ -117,23 +139,18 @@ def main():
         "multi_gpu": {
             "enabled": False,
         },
-        "actor": {
-            "class_name": "rsl_rl.models.mlp_model.MLPModel",
-            "hidden_dims": [256, 128, 64],
+        "policy": {
+            "class_name": "ActorCritic",
+            "init_noise_std": 1.0,
+            "noise_std_type": "scalar",
+            "actor_obs_normalization": True,
+            "critic_obs_normalization": True,
+            "actor_hidden_dims": [256, 128, 64],
+            "critic_hidden_dims": [256, 128, 64],
             "activation": "elu",
-            "obs_normalization": True,
-            "distribution_cfg": {
-                "class_name": "rsl_rl.modules.distribution.GaussianDistribution",
-            },
-        },
-        "critic": {
-            "class_name": "rsl_rl.models.mlp_model.MLPModel",
-            "hidden_dims": [256, 128, 64],
-            "activation": "elu",
-            "obs_normalization": True,
         },
         "obs_groups": {
-            "actor": ["policy"],
+            "policy": ["policy"],
             "critic": ["policy"],
         },
     }
@@ -150,8 +167,8 @@ def main():
     # PyTorch default init gives critic output ≈ ±10. With bootstrapping
     # (time_out=True), this amplifies immediately: V≈10 → returns≈10×150 →
     # value_loss starts at 10M. Near-zero initialization makes V(s)≈0 so returns=reward≈0.1
-    runner.alg.critic.mlp[-1].weight.data.mul_(0.01)
-    runner.alg.critic.mlp[-1].bias.data.zero_()
+    runner.alg.policy.critic[-1].weight.data.mul_(0.01)
+    runner.alg.policy.critic[-1].bias.data.zero_()
     print("  Near-zero initialized critic output layer (prevents bootstrap amplification)")
 
 
@@ -159,45 +176,84 @@ def main():
     if args_cli.checkpoint:
         print(f"  Loading checkpoint: {args_cli.checkpoint}")
         runner.load(args_cli.checkpoint)
+    elif args_cli.warm_start:
+        print(f"  Warm-starting actor from: {args_cli.warm_start}")
+        checkpoint = torch.load(args_cli.warm_start, map_location=device, weights_only=False)
+        source_state = checkpoint["model_state_dict"]
+        transferable = {
+            key: value
+            for key, value in source_state.items()
+            if key.startswith("actor.") or key.startswith("actor_obs_normalizer.")
+        }
+        unexpected = sorted(set(transferable) - set(runner.alg.policy.state_dict()))
+        if unexpected:
+            raise RuntimeError(f"Unexpected warm-start parameters: {unexpected}")
+        # RSL-RL's ActorCritic overrides PyTorch's return type with a boolean,
+        # so validate keys above and then perform the partial load.
+        runner.alg.policy.load_state_dict(transferable, strict=False)
+        if args_cli.phase > 0:
+            # Phase 0 keeps the gripper open, so these two dimensions have an
+            # epsilon-sized variance in its normalizer.  A first close command
+            # would otherwise become a ~200-sigma input and destroy the reach
+            # behavior we are trying to transfer.
+            normalizer = runner.alg.policy.actor_obs_normalizer
+            normalizer._mean[0, 19] = 0.5   # scaled finger position: [0, 1]
+            normalizer._var[0, 19] = 0.25
+            normalizer._std[0, 19] = 0.5
+            normalizer._mean[0, 33] = 0.0   # previous gripper action: [-1, 1]
+            normalizer._var[0, 33] = 1.0
+            normalizer._std[0, 33] = 1.0
+            runner.alg.policy.actor[0].weight.data[:, [19, 33]] = 0.0
+        print(
+            f"  Transferred {len(transferable)} actor/normalizer tensors; "
+            "critic and optimizer remain freshly initialized"
+        )
 
     # ── Auto-close gripper for Phase 1 ───────────────────────────────────
-    if args_cli.phase == 1:
-        # Access underlying Isaac Lab env through RSL wrapper
-        raw_env = env.unwrapped if hasattr(env, 'unwrapped') else env
+    if args_cli.phase in (0, 1):
         robot = raw_env.scene["robot"]
         ee_idx = robot.data.body_names.index("wrist_3_link")
-        finger_idx = robot.data.joint_names.index("finger_joint")
         obj = raw_env.scene["object"]
-        
-        def auto_close_gripper():
-            """Force gripper close when EE is near object (for Phase 1 grasping)."""
-            ee_pos = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
-            obj_pos = obj.data.root_pos_w - raw_env.scene.env_origins
-            dist = torch.norm(ee_pos - obj_pos, dim=1)
-            near = dist < 0.06
-            if near.any():
-                near_ids = torch.where(near)[0]
-                joint_pos = robot.data.joint_pos[near_ids].clone()
-                joint_pos[:, finger_idx] = 0.785
-                joint_vel = torch.zeros_like(joint_pos)
-                robot.write_joint_state_to_sim(joint_pos, joint_vel, env_ids=near_ids)
-        
-        # Monkey-patch the step to auto-close after each action
+        gripper_closed = torch.zeros(args_cli.num_envs, dtype=torch.bool, device=device)
         _orig_step = env.step
-        def _step_with_auto_close(actions):
-            obs, rew, dones, info = _orig_step(actions)
-            auto_close_gripper()
+
+        def _step_with_scripted_gripper(actions):
+            safe_actions = actions.clone()
+            if args_cli.phase == 0:
+                # Gripper exploration is irrelevant to reaching and was the main
+                # source of articulation instability in the old Phase 0 run.
+                safe_actions[:, 6] = 1.0
+            else:
+                ee_pos = robot.data.body_pos_w[:, ee_idx] - raw_env.scene.env_origins
+                ee_quat = robot.data.body_quat_w[:, ee_idx]
+                obj_pos = obj.data.root_pos_w - raw_env.scene.env_origins
+                target_offset = torch.tensor(
+                    GRASP_TARGET_OFFSET, device=device, dtype=ee_pos.dtype
+                )
+                desired_quat = torch.tensor(
+                    DESIRED_WRIST_QUAT, device=device, dtype=ee_quat.dtype
+                )
+                position_ready = torch.norm(
+                    ee_pos - (obj_pos + target_offset), dim=1
+                ) < 0.06
+                orientation_error = 2.0 * torch.acos(
+                    torch.sum(ee_quat * desired_quat, dim=1).abs().clamp(max=1.0)
+                )
+                gripper_closed.logical_or_(
+                    position_ready & (orientation_error < 0.436332313)
+                )
+                safe_actions[:, 6] = torch.where(gripper_closed, -1.0, 1.0)
+            obs, rew, dones, info = _orig_step(safe_actions)
+            gripper_closed[dones.bool()] = False
             return obs, rew, dones, info
-        env.step = _step_with_auto_close
-        print("  Auto-close gripper enabled (closes at <4cm)")
+
+        env.step = _step_with_scripted_gripper
+        if args_cli.phase == 0:
+            print("  Scripted gripper: held open during reach training")
+        else:
+            print("  Scripted gripper: closes through actuator dynamics at <6cm")
 
     # ── Curriculum: start with closer objects, expand over training ─────
-    # Phase 0 only — tightens then expands object x-range for precision
-    if args_cli.phase == 0 and not args_cli.checkpoint:
-        # Fresh training: start easy
-        env_cfg.events.reset_object.params["pose_range"]["x"] = (0.30, 0.40)
-        print("  Curriculum: narrow object range (0.30-0.40) for first 300 iters")
-
     # ── Train ────────────────────────────────────────────────────────────
     print("  Starting training...")
     start_time = time.time()
@@ -206,10 +262,12 @@ def main():
     print(f"\n  Training time: {total_time:.1f}s ({total_time/60:.1f} min)")
 
     # ── Save model ────────────────────────────────────────────────────────
-    save_dir = os.path.join("models", "isaac", f"phase_{args_cli.phase}")
-    os.makedirs(save_dir, exist_ok=True)
-    runner.save(os.path.join(save_dir, "model.pt"))
-    print(f"  Model saved to: {save_dir}/")
+    model_path = args_cli.output_model or os.path.join(
+        "models", "isaac", f"phase_{args_cli.phase}", "model.pt"
+    )
+    os.makedirs(os.path.dirname(os.path.abspath(model_path)), exist_ok=True)
+    runner.save(model_path)
+    print(f"  Model saved to: {model_path}")
 
     env.close()
     print("  Done!")

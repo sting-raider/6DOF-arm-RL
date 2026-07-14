@@ -8,6 +8,7 @@ Three-phase curriculum:
 """
 
 import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import (
@@ -25,7 +26,11 @@ from isaaclab_assets.robots.universal_robots import UR10e_ROBOTIQ_2F_85_CFG
 
 import isaac_env.mdp as mdp
 import isaaclab.envs.mdp as isaac_mdp
-from isaaclab.envs.mdp import RelativeJointPositionActionCfg, BinaryJointPositionActionCfg
+
+from isaac_env.actions import (
+    BoundedRelativeJointPositionActionCfg,
+    SlewLimitedBinaryJointPositionActionCfg,
+)
 
 
 @configclass
@@ -74,6 +79,27 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
                 "left_inner_finger_joint": 0.0,
             },
         ),
+    )
+    # Isaac Lab's stock 2F-85 drive gains are too lightly damped near closure
+    # for repeated contact-rich RL rollouts.  These values follow its official
+    # UR10e gear-assembly configuration and keep the mimic linkage controlled.
+    robot.actuators["gripper_drive"] = ImplicitActuatorCfg(
+        joint_names_expr=["finger_joint"],
+        effort_limit_sim=10.0,
+        velocity_limit_sim=1.0,
+        stiffness=40.0,
+        damping=1.0,
+        friction=0.0,
+        armature=0.0,
+    )
+    robot.actuators["gripper_finger"] = ImplicitActuatorCfg(
+        joint_names_expr=[".*_inner_finger_joint"],
+        effort_limit_sim=10.0,
+        velocity_limit_sim=10.0,
+        stiffness=10.0,
+        damping=0.05,
+        friction=0.0,
+        armature=0.0,
     )
 
     # Object to manipulate (red cube)
@@ -162,7 +188,7 @@ class PickPlaceSceneCfg(InteractiveSceneCfg):
 class ActionsCfg:
     """Joint position delta + gripper actions."""
 
-    arm_action = RelativeJointPositionActionCfg(
+    arm_action = BoundedRelativeJointPositionActionCfg(
         asset_name="robot",
         joint_names=[
             "shoulder_pan_joint",
@@ -176,34 +202,17 @@ class ActionsCfg:
         use_zero_offset=True,
     )
 
-    # Robotiq 2F-85:
-    # Explicitly map the dependent joints for more reliable open/close behavior.
-    gripper_action = BinaryJointPositionActionCfg(
+    # Robotiq 2F-85: command only its actuated drive joint. The USD mimic
+    # constraints move the dependent joints; commanding passive joints directly
+    # destabilizes the articulation under exploratory actions.
+    gripper_action = SlewLimitedBinaryJointPositionActionCfg(
         asset_name="robot",
-        joint_names=[
-            "finger_joint",
-            "right_outer_knuckle_joint",
-            "right_inner_finger_joint",
-            "right_inner_finger_knuckle_joint",
-            "left_inner_finger_knuckle_joint",
-            "left_inner_finger_joint",
-        ],
-        open_command_expr={
-            "finger_joint": 0.0,
-            "right_outer_knuckle_joint": 0.0,
-            "right_inner_finger_joint": 0.0,
-            "right_inner_finger_knuckle_joint": 0.0,
-            "left_inner_finger_knuckle_joint": 0.0,
-            "left_inner_finger_joint": 0.0,
-        },
-        close_command_expr={
-            "finger_joint": 0.785398163,
-            "right_outer_knuckle_joint": 0.785398163,
-            "right_inner_finger_joint": 0.785398163,
-            "right_inner_finger_knuckle_joint": -0.785398163,
-            "left_inner_finger_knuckle_joint": -0.785398163,
-            "left_inner_finger_joint": -0.785398163,
-        },
+        joint_names=["finger_joint"],
+        open_command_expr={"finger_joint": 0.0},
+        # Stay away from the fully-closed linkage singularity.  The 0.65-rad
+        # target is still narrower than the 4 cm training cube.
+        close_command_expr={"finger_joint": 0.65},
+        max_delta=0.01,
     )
 
 
@@ -248,10 +257,11 @@ class ObservationsCfg:
 
         # End effector position and gripper state
         ee_pos = ObsTerm(func=mdp.ee_position_scaled, params={"link_name": "wrist_3_link"})
+        ee_quat = ObsTerm(func=mdp.ee_orientation, params={"link_name": "wrist_3_link"})
         gripper_state = ObsTerm(func=mdp.gripper_state_scaled)
 
         # Object position and relative distance vector
-        object_pos = ObsTerm(func=mdp.object_position)
+        object_pos = ObsTerm(func=mdp.policy_target_position)
         relative_pos = ObsTerm(func=mdp.relative_position)
 
         # Scalar distance — helps policy gauge approach quality
@@ -287,6 +297,12 @@ class TerminationsCfg:
 
     # Object must fall below the table surface to trigger cleanly.
     object_fell = DoneTerm(func=mdp.object_fell, params={"minimum_height": 0.5})
+
+    # Separate integrity terms make the source of any safety reset observable in
+    # the training log while still resetting before bad values reach the policy.
+    invalid_arm = DoneTerm(func=mdp.invalid_arm_state)
+    invalid_gripper = DoneTerm(func=mdp.invalid_gripper_state)
+    invalid_object = DoneTerm(func=mdp.invalid_object_state)
 
 
 @configclass

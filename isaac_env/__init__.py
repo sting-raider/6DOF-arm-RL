@@ -1,5 +1,6 @@
 # Copyright (c) 2026, 6DOF-arm-RL Project
 """UR10e pick-and-place environment for Isaac Lab."""
 
-from .env_cfg import PickPlaceEnvCfg  # noqa: F401
-from .mdp import *  # noqa: F401, F403
+# Keep package import hardware-independent. Isaac Sim is launched explicitly by
+# the training/evaluation entry points before they import ``env_cfg`` or ``mdp``.
+# Eager imports here would bootstrap Kit during ordinary unit tests and tooling.

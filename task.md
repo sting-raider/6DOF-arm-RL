@@ -1,32 +1,31 @@
-# 6-DOF Arm Pick-and-Place — Implementation Task Tracker
+# Active task tracker
 
-## 1. Environment Config & Package Structure ✅ COMPLETE
-- [x] Implement `HERMES_DISABLE_DR` in `PickPlaceEnvCfg.__post_init__` inside `env_cfg.py`
-- [x] Verify `isaac_env/__init__.py` imports and package structure
+## Completed
 
-## 2. MDP Definitions & Gripper Semantics ✅ COMPLETE
-- [x] Update `gripper_state()` in `mdp.py` to dynamically index `"finger_joint"`
-- [x] Update `gripper_state_scaled()` in `mdp.py` to scale `"finger_joint"` to `[0, 1]`
-- [x] Update `reach_reward()` in `mdp.py` to use `"finger_joint"` closedness
-- [x] Delete unused `joint_pos_delta_action()` and `gripper_action()` in `mdp.py`
-- [x] Delete unused `_debug_printed` latch variables in `mdp.py`
-- [x] Align hardcoded basket target center in `mdp.py` to `[0.6, 0.0, 0.85]`
+- [x] Stabilize the observation normalizer by excluding passive/mimic velocities.
+- [x] Add wrist quaternion and distance for a 34D policy input.
+- [x] Bound relative joint targets and gripper slew rate.
+- [x] Train and validate target-conditioned Phase 0 reaching.
+- [x] Warm-start the current Phase 1 checkpoint.
+- [x] Verify Robotiq mimic linkage and physical contact.
+- [x] Build and benchmark the hybrid grasp controller.
+- [x] Add one bounded, midpoint-corrected regrasp (78/128 strict lifts).
+- [x] Add a four-object visual layout.
+- [x] Add target-shuffle and grasp-geometry evaluation controls.
+- [x] Document the verified Windows laptop commands.
 
-## 3. Training Script Cleanup ✅ COMPLETE
-- [x] Clean up unused imports (`gymnasium`, `datetime`) in `train_isaac.py`
-- [x] Update misleading "zero-initialized critic" comments in `train_isaac.py`
+## In progress
 
-## 4. Evaluators Synchronization ✅ COMPLETE
-- [x] Sync header comments and `obs_normalization: True` settings in `evaluate_isaac.py`
-- [x] Remove 20-step normalizer warmup block in `evaluate_isaac.py`
-- [x] Wrap rollout inference loop with `with torch.no_grad():` in `evaluate_isaac.py`
-- [x] Align basket center coordinate in `evaluate_isaac.py` to `[0.6, 0.0, 0.85]`
-- [x] Align grasp success detection to `"finger_joint"` position (>0.40 rad) in `evaluate_isaac.py`
-- [x] Point `PHASES` models to `models/isaac/phase_{phase}/model.pt` in `evaluate_all.py`
-- [x] Point called entrypoint to `scripts/evaluate_isaac.py` in `evaluate_all.py`
+- [x] Camera-target provider with confidence/staleness behavior.
+- [x] Camera-like target noise and bias evaluation.
+- [x] Reactive slip detection and regrasp.
+- [ ] Attribute integrity resets to grasp stages and reduce them below 2%.
+- [ ] Extract the hybrid state machine into a reusable controller module.
+- [ ] Starter-object gate: at least 80% strict lift with a two-second hold.
+- [ ] Latency/dropout target-sequence evaluation after contact stabilization.
 
-## 5. Verification & Testing ✅ COMPLETE
-- [x] Run evaluation of Phase 0 with `HERMES_DISABLE_DR=1`
-- [x] Run batch evaluation check with `evaluate_all.py --dry-run`
-- [x] Push clean changes to GitHub repository
+## Deferred
 
+- [ ] Shrink the grasp curriculum toward the original 4 cm cube.
+- [ ] Phase 2 transport and basket placement.
+- [ ] Short cloud residual-policy run, only if deterministic control plateaus.

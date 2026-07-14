@@ -1,88 +1,132 @@
-# 6-DOF Arm Pick-and-Place — Project Roadmap
+# 6-DOF arm roadmap
 
-> **Last Updated**: 2026-05-27 (Session 5 — Training Tuning & Phase 2 Prep)
-> **Current State**: Phase 0 (REACH) retraining (Run 49) actively running at 8192 envs. Corrected robot base position to ground (0,0,0), lifted start pose, increased action scale to 0.07, and relaxed eval threshold to 8cm. Reach reward currently plateauing around 0.50 (~14cm distance).
+Last updated: 2026-07-14
 
----
+## Constraints and decisions
 
-## Project Health Summary
+- Prefer local RTX 3060 laptop runs with 256-512 environments for experiments.
+- Do not require purchased hardware for the current development milestones.
+- Phase 0 is complete and will not be retrained unless a regression invalidates
+  its 256/256 strict reach result.
+- The eventual task input is a camera feed converted into an object pose. Robot
+  joint feedback still closes the control loop.
+- Do not train a raw-video-to-motor policy. Use a detector/pose estimator, the
+  existing reach policy, and deterministic contact control.
+- The four-hour cloud GPU is gated behind a demonstrated deterministic-control
+  plateau. If used, train only a small residual correction policy.
 
-| Component | Status | Notes |
-|---|---|---|
-| Isaac Lab environment (`isaac_env/`) | ✅ Active | 8192 parallel envs, RSL-RL, GPU-native |
-| Robot wrapper | ✅ Working | UR10e, PD control, FK, active joint filtering |
-| Gym environment | ✅ Stable | 29D obs, potential-based rewards |
-| Training pipeline | ✅ Stabilized | Standard running normalization restored |
-| Phase 0 model | 🔄 Training | Run 49 active (8192 envs, plateau at ~0.50 reach) |
-| Phase 1 model | ⏳ Queued | Will train from Phase 0 best model with corrected geometry |
-| Phase 2 model | ⏳ Queued | Pending hollow basket with collisions |
-| Evaluation script | ✅ Fixed | Local coordinate frames corrected, debug distances added |
-| Domain randomization | ✅ Implemented | Mass/size/friction/obs noise. Active by default. |
-| Web demo (`scripts/web_demo.py`) | ✅ Updated | 20D/29D format compatible, live dashboard |
-| CI/CD (`.github/workflows/ci.yml`) | ✅ Active | Smoke tests + flake8 on push to main |
-| Vision pipeline (`sensors/camera.py`) | ⚠️ Built, unused | Not integrated into obs yet |
-| Isaac Sim rendering | ⚠️ Scaffolding only | RTX rendering pipeline pending |
-| Tests (`tests/smoke_test.py`) | ✅ Passing | 13 pytest tests passing |
-| README.md | ✅ Updating | Synced to 29D obs and corrected thresholds |
+## Milestone 0: target-conditioned reach - complete
 
----
+- [x] Stable 34D observation space and normalization.
+- [x] Bounded arm actions and stable Robotiq drive action.
+- [x] 256/256 strict 5 cm reach evaluation.
+- [x] Target-shuffle ablation demonstrating target conditioning.
+- [x] Four-arm visual evaluation at distinct positions.
 
-## Training Results
+## Milestone 1A: contact stability - immediate priority
 
-All training on **RTX 3060 Laptop GPU**, Isaac Lab + RSL-RL.
+- [x] Verify the simulated Robotiq linkage and physical colliders.
+- [x] Instrument individual timeout, object, arm, and gripper termination terms.
+- [x] Reject damping and effort changes that trade safety for misleading lifts.
+- [ ] Attribute integrity resets to exact grasp stages and successful/failed
+  episodes.
+- [ ] Prevent mechanically invalid finger overshoot without reducing strict lift.
+- [ ] Reduce combined arm/gripper integrity terminations below 2% in the nominal
+  starter-object benchmark.
+- [ ] Add a repeatable contact-stability regression matrix covering at least
+  three seeds.
 
-| Phase | Task | Steps | Steps/sec | Reach | Grasp | Place | Status |
-|---|---|---|---|---|---|---|---|
-| **0 – REACH** | Move EE to object | 500 iter | ~37k | 0.50 | — | — | 🔄 Training (Run 49) |
-| **1 – GRASP** | Reach + close + lift | TBD | TBD | TBD | TBD | — | ⏳ Queued |
-| **2 – PLACE** | Full task end-to-end | TBD | TBD | TBD | TBD | TBD | ⏳ Queued |
+## Milestone 1B: reusable hybrid controller
 
----
+- [x] Separate learned reaching from deterministic descend/close/retract control.
+- [x] Add full-pose damped-least-squares control.
+- [x] Add slip detection and one bounded, midpoint-corrected regrasp.
+- [x] Reach 78/128 (60.9%) strict lifts across two seeds.
+- [ ] Move the hybrid state machine out of `scripts/evaluate_isaac.py` into a
+  reusable controller module.
+- [ ] Make training evaluation, visual demos, and future deployment use the same
+  controller implementation.
+- [ ] Add unit tests for state transitions, retry limits, stale targets, and safe
+  open/stop behavior.
 
-## Phase 1: Fix Training Pipeline ✅ COMPLETE
+## Milestone 1C: Phase 1 exit gates
 
-- [x] **Reward function**: positive potential-based shaping, per-component logging
-- [x] **Environment**: 29D complete state observability, per-phase episode limits
-- [x] **Training infrastructure**: YAML config, EvalCallback, warm-start, GPU
-- [x] **Cleanup & security**: scripts archived, NGC API key removed, old logs/models purged
+Phase 1 is complete only when all of these pass:
 
----
+- [ ] At least 80% strict lift success on the 4 x 4 x 10 cm starter object.
+- [ ] At least 256 evaluated episodes across at least three seeds.
+- [ ] Less than 2% arm/gripper integrity terminations.
+- [ ] Hold the lifted object for at least two seconds without dropping or
+  exceeding joint limits.
+- [ ] At least 70% strict lift under bounded pose, friction, and mass
+  perturbations.
+- [ ] Pass the fixed four-arm layout with four different object positions.
 
-## Phase 2: Improve Robustness & Generalization 🔄 IN PROGRESS
+## Milestone 1D: object curriculum
 
-> **Goal**: Achieve $\ge 90\%$ REACH success and $\ge 80\%$ GRASP & PLACE success in Isaac Lab under domain randomization.
+Start only after the nominal Phase 1 exit gates pass.
 
-### 2.1 Fine-tune Phase 0 (REACH) 🔄 IN PROGRESS
-- [x] Correct robot base position to (0,0,0) (ground level)
-- [x] Lift starting pose to reach over table (`shoulder_lift=-1.4`, `elbow=1.7`)
-- [x] Bump action scale from 0.05 to 0.07 for faster motion
-- [x] Increase PhysX buffer sizes for 8192 envs (`8M` found_lost, `32K` pairs)
-- [ ] Push reach reward past 0.50 plateau (may need reward shaping tweaks or larger action scale)
-- [ ] Evaluate best checkpoint and check real EE-to-object distances
+- [ ] Shorten the starter block in measured stages: 10 cm to 8 cm to 6 cm to
+  the original 4 cm cube.
+- [ ] Add width, aspect-ratio, yaw, mass, and friction variation one factor at a
+  time.
+- [ ] Add multiple simple shapes before claiming arbitrary-object handling.
+- [ ] Record per-object success rates instead of reporting one aggregate score.
 
-### 2.2 Phase 1 → Phase 2 Pipeline ⏳ QUEUED
-- [ ] Warm-start Phase 1 from retrained stable Phase 0
-- [ ] **Phase 2 Prep**: Replace visual-proxy basket with a 5-part hollow rigid-body basket with collisions enabled
-- [ ] Warm-start Phase 2 from retrained stable Phase 1
-- [ ] Target: $\ge 80\%$ grasp and place success
+## Milestone 2: camera-target robustness
 
-### 2.3 Domain Randomization ✅ COMPLETE
-- [x] Object size randomization (0.015–0.030 m)
-- [x] Object mass randomization (0.05–0.20 kg)
-- [x] Friction randomization (0.5×–2.0×)
-- [x] Observation noise (Gaussian σ=0.002)
+- [x] Define a target estimate with XYZ, timestamp, and confidence.
+- [x] Feed estimates through the same policy channel used by simulator truth.
+- [x] Reject stale, low-confidence, out-of-workspace, and jumping detections.
+- [x] Test position noise and persistent calibration bias in simulation.
+- [ ] Test update latency, dropped frames, and bursty detections.
+- [ ] Verify that stale or invalid targets stop target-directed motion and keep
+  the gripper open.
+- [ ] Pass the Phase 0 reach benchmark with the simulated camera stream before
+  connecting an RGB detector.
 
-### 2.4 Evaluation & Deliverables
-- [ ] Run comprehensive evaluation with all 3 phases in Isaac Lab
-- [ ] Generate evaluation videos via Isaac Sim
-- [ ] Push Phase 0/1/2 models + results to GitHub
+## Milestone 3: low-cost RGB detector
 
----
+Start after contact stability and simulated camera-stream tests pass.
 
-## Phase 3: Vision-Based Policy
-- [ ] Enable `use_vision=True` path
-- [ ] 64×64 RGB stacked frames, CNN policy
-- [ ] Frame stacking (3–4 frames)
-- [ ] Depth rendering via Isaac Sim
-- [ ] State-Vision Distillation (Teacher → Student via DAgger)
-- [ ] Camera intrinsic/extrinsic calibration via Isaac Sim
+- [ ] Use a pretrained or classical tabletop detector before considering custom
+  vision training.
+- [ ] Convert image detections into robot-frame XYZ through camera/table
+  calibration.
+- [ ] Target approximately 1 cm persistent position accuracy for grasping;
+  treat 3 cm as a reach-only outer bound.
+- [ ] Test recorded or synthetic video for occlusion, lighting, confidence, and
+  calibration drift.
+- [ ] Keep detector replacement independent of the reach/grasp controller.
+
+## Milestone 4: Phase 2 transport and placement
+
+Do not start until every Phase 1 exit gate passes.
+
+- [ ] Add a stable hold-to-transport transition.
+- [ ] Move a grasped object to the basket without integrity resets or excessive
+  slip.
+- [ ] Validate basket collision geometry.
+- [ ] Add controlled release and post-release verification.
+- [ ] Evaluate full reach-grasp-transport-place success across multiple seeds.
+
+## Milestone 5: optional residual policy and cloud gate
+
+Cloud training is authorized only if deterministic control has plateaued after
+Milestones 1A-1C and the remaining error is clearly measurable.
+
+- [ ] Write a residual-policy hypothesis and local baseline before using cloud
+  time.
+- [ ] Freeze the validated Phase 0 policy.
+- [ ] Train only bounded corrections around deterministic grasp control.
+- [ ] Time-box the cloud run to the available four hours.
+- [ ] Keep the residual only if it improves held-out success without increasing
+  integrity resets.
+
+## Sim-to-real claim gate
+
+Simulation success does not guarantee perfect real-world transfer. Before making
+that claim, measure camera calibration error, pose-estimation error, latency,
+friction, mass, gripper compliance, robot joint limits, emergency-stop behavior,
+and safe handling of lost detections. Physical validation remains deferred until
+hardware is available without expanding the current project budget.

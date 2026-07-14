@@ -14,6 +14,15 @@ if TYPE_CHECKING:
     from isaaclab.managers import SceneEntityCfg
 
 
+# Shared task geometry in each environment's local frame.  Keeping these values
+# here prevents training rewards and evaluation metrics from silently disagreeing.
+OBJECT_REST_HEIGHT = 0.83
+LIFT_SUCCESS_DELTA = 0.05
+BASKET_CENTER = (-0.35, 0.0, 0.85)
+GRASP_TARGET_OFFSET = (0.0, 0.0, 0.19)
+DESIRED_WRIST_QUAT = (0.0, 2**-0.5, 2**-0.5, 0.0)
+
+
 # =============================================================================
 # ACTION TERMS
 # =============================================================================
@@ -33,6 +42,16 @@ def ee_position(
     return ee_pos_w - env.scene.env_origins
 
 
+def ee_orientation(
+    env: ManagerBasedRLEnv,
+    link_name: str = "wrist_3_link",
+) -> torch.Tensor:
+    """End-effector orientation as a world-frame quaternion (w, x, y, z)."""
+    robot = env.scene["robot"]
+    ee_idx = robot.data.body_names.index(link_name)
+    return robot.data.body_quat_w[:, ee_idx]
+
+
 def object_position(
     env: ManagerBasedRLEnv,
     object_name: str = "object",
@@ -43,13 +62,56 @@ def object_position(
     return obj.data.root_pos_w - env.scene.env_origins
 
 
+def policy_target_position(
+    env: ManagerBasedRLEnv,
+    object_name: str = "object",
+) -> torch.Tensor:
+    """Target supplied to the policy, defaulting to simulator truth.
+
+    A camera adapter may set ``env._policy_target_position`` to an ``(N, 3)``
+    tensor. Rewards and success metrics continue to call :func:`object_position`
+    and therefore remain grounded in physical simulator truth.
+    """
+    override = getattr(env, "_policy_target_position", None)
+    if override is None:
+        return object_position(env, object_name)
+    if override.shape != (env.num_envs, 3):
+        raise ValueError(
+            "env._policy_target_position must have shape "
+            f"({env.num_envs}, 3), got {tuple(override.shape)}"
+        )
+    return override
+
+
+def grasp_target_position(
+    env: ManagerBasedRLEnv,
+    object_name: str = "object",
+) -> torch.Tensor:
+    """Top-down wrist target that places the 2F-85 fingers around the object."""
+    offset = torch.tensor(
+        GRASP_TARGET_OFFSET, device=env.device, dtype=torch.float32
+    )
+    return object_position(env, object_name) + offset
+
+
+def policy_grasp_target_position(
+    env: ManagerBasedRLEnv,
+    object_name: str = "object",
+) -> torch.Tensor:
+    """Policy target plus the fixed wrist pre-grasp offset."""
+    offset = torch.tensor(
+        GRASP_TARGET_OFFSET, device=env.device, dtype=torch.float32
+    )
+    return policy_target_position(env, object_name) + offset
+
+
 def relative_position(
     env: ManagerBasedRLEnv,
     ee_link: str = "wrist_3_link",
     object_name: str = "object",
 ) -> torch.Tensor:
-    """Vector from end-effector to object in local env frame."""
-    return object_position(env, object_name) - ee_position(env, ee_link)
+    """Vector from wrist to the top-down pre-grasp target in local frame."""
+    return policy_grasp_target_position(env, object_name) - ee_position(env, ee_link)
 
 
 
@@ -75,6 +137,11 @@ def object_position_scaled(env, object_name="object"):
     """Object position scaled to ~[0, 1]."""
     return object_position(env, object_name) / 1.0
 
+
+def policy_target_position_scaled(env, object_name="object"):
+    """Camera/simulator target channel, kept separate from reward truth."""
+    return policy_target_position(env, object_name) / 1.0
+
 def gripper_state_scaled(env, asset_name="robot"):
     """Gripper state scaled to [0, 1]."""
     return gripper_state(env, asset_name) / 0.785398163
@@ -84,12 +151,27 @@ def ee_to_object_distance(
     env: ManagerBasedRLEnv,
     ee_link: str = "wrist_3_link",
 ) -> torch.Tensor:
-    """Scalar distance from end-effector to object centroid."""
+    """Scalar distance from wrist to the top-down pre-grasp target."""
     robot = env.scene["robot"]
     ee_idx = robot.data.body_names.index(ee_link)
     ee_pos = robot.data.body_pos_w[:, ee_idx] - env.scene.env_origins
-    obj_pos = object_position(env)
-    return torch.norm(ee_pos - obj_pos, dim=1, keepdim=True)
+    target_pos = policy_grasp_target_position(env)
+    return torch.norm(ee_pos - target_pos, dim=1, keepdim=True)
+
+
+def wrist_orientation_error(
+    env: ManagerBasedRLEnv,
+    ee_link: str = "wrist_3_link",
+) -> torch.Tensor:
+    """Shortest angular error to the fixed top-down grasp orientation, in radians."""
+    robot = env.scene["robot"]
+    ee_idx = robot.data.body_names.index(ee_link)
+    wrist_quat = robot.data.body_quat_w[:, ee_idx]
+    desired = torch.tensor(
+        DESIRED_WRIST_QUAT, device=env.device, dtype=wrist_quat.dtype
+    ).expand_as(wrist_quat)
+    similarity = torch.sum(wrist_quat * desired, dim=1).abs().clamp(max=1.0)
+    return 2.0 * torch.acos(similarity)
 
 
 # =============================================================================
@@ -205,11 +287,14 @@ def reach_reward(
     """Phase-aware reach/grasp/place reward.
 
     Reads ``env.cfg.curriculum_phase`` to dispatch:
-      Phase 0 (REACH):  exp(-||ee_xyz - object_xyz|| / std)
-      Phase 1 (GRASP):  Phase 0 reward + grasp bonus when gripper is closed near object
+      Phase 0 (PRE-GRASP): approach the pose above the object, then align the wrist
+      Phase 1 (GRASP): Phase 0 reward + grasp/lift bonus
       Phase 2 (PLACE):  exp(-||object_xyz - basket_xyz|| / std)
 
-    Returns a per-environment scalar in [0, 1] (plus grasp bonus in [0, 0.5]).
+    Phase 0 couples position and orientation: a broad distance term guides the
+    initial approach, while a fine orientation-weighted term becomes important
+    only near the object.  This prevents either objective from being collected
+    in isolation.
     """
     # End-effector position
     robot = env.scene["robot"]
@@ -221,12 +306,23 @@ def reach_reward(
 
     phase = env.cfg.curriculum_phase
 
-    # Distances
-    ee_to_obj = torch.norm(ee_pos - obj_pos, dim=1)
+    # Distance and orientation error for the physically valid top-down pre-grasp.
+    grasp_target = grasp_target_position(env)
+    ee_to_obj = torch.norm(ee_pos - grasp_target, dim=1)
+    orientation_error = wrist_orientation_error(env, ee_link)
+    orientation_score = 1.0 - orientation_error / torch.pi
+    aligned = (orientation_error < 0.785398163).float()
 
-    # Basket centre in local env frame (env_cfg: basket init pos = (0.6, 0.0, 0.85))
+    # Smooth approach-then-align curriculum shared by Phases 0 and 1.
+    coarse_reach = torch.exp(-ee_to_obj / 0.25)
+    fine_reach = torch.exp(-ee_to_obj / 0.08)
+    coupled_pregrasp = coarse_reach + 3.0 * fine_reach * (
+        0.25 + torch.square(orientation_score)
+    )
+
+    # Basket centre in local env frame.
     # obj_pos is already in local frame, so basket_center must also be local (same for all envs)
-    basket_center = torch.tensor([0.6, 0.0, 0.85], device=env.device, dtype=torch.float32)
+    basket_center = torch.tensor(BASKET_CENTER, device=env.device, dtype=torch.float32)
     obj_to_basket = torch.norm(obj_pos - basket_center, dim=1)
 
     # Unified finger joint index and closedness
@@ -235,31 +331,38 @@ def reach_reward(
     closedness = torch.clamp(gripper_joint_pos / 0.785398163, 0.0, 1.0)
 
     if phase == 0:
-        # ── REACH: dense shaping + sparse success bonuses ──
-        reach = torch.exp(-ee_to_obj / 0.10)
-        bonus_8cm = 2.0 * (ee_to_obj < 0.08).float()
-        bonus_5cm = 1.0 * (ee_to_obj < 0.05).float()
-        return reach + bonus_8cm + bonus_5cm
+        # ── PRE-GRASP: position + top-down wrist alignment ──
+        bonus_8cm = 2.0 * (ee_to_obj < 0.08).float() * aligned
+        bonus_5cm = 1.0 * (ee_to_obj < 0.05).float() * aligned
+        grasp_ready = (
+            (ee_to_obj < 0.06) & (orientation_error < 0.436332313)
+        ).float()
+        return coupled_pregrasp + bonus_8cm + bonus_5cm + 6.0 * grasp_ready
 
     elif phase == 1:
         # ── GRASP: reach + lift reward gated on grasp ──
         # Reach: same as Phase 0 — maintains approach behavior
-        reach = torch.exp(-ee_to_obj / 0.10) + 2.0 * (ee_to_obj < 0.08).float() + 1.0 * (ee_to_obj < 0.05).float()
-        
-        # Lift: reward when gripper closed AND object above table
-        is_grasping = (closedness > 0.4) & (ee_to_obj < 0.06)
+        grasp_ready = (
+            (ee_to_obj < 0.06) & (orientation_error < 0.436332313)
+        ).float()
+        reach = (
+            coupled_pregrasp
+            + 2.0 * (ee_to_obj < 0.08).float() * aligned
+            + 1.0 * (ee_to_obj < 0.05).float() * aligned
+            + 6.0 * grasp_ready
+        )
+
+        # A grasp is only credited when the physically actuated finger has moved,
+        # the wrist remains near the cube, and the cube actually rises.  The old
+        # z>0.84 check was already true at the 0.85 m reset pose.
+        grasp_contact_proxy = (closedness > 0.10) & (ee_to_obj < 0.08)
         obj_z = obj_pos[:, 2]
-        lift_height = torch.clamp(obj_z - 0.83, 0.0, 0.10)  # height above initial
-        lift_bonus = 2.0 * (lift_height > 0.02).float() * is_grasping.float()
-        lift_shaping = lift_height * 3.0 * is_grasping.float()  # continuous gradient
-        
-        # Drop penalty: lose grip after having it
-        was_grasping = getattr(env, '_was_grasping', torch.zeros_like(is_grasping))
-        dropped = was_grasping & (~is_grasping)
-        env._was_grasping = is_grasping.detach()
-        drop_penalty = -2.0 * dropped.float()
-        
-        return reach + lift_bonus + lift_shaping + drop_penalty
+        lift_height = torch.clamp(obj_z - OBJECT_REST_HEIGHT, 0.0, 0.15)
+        lifted = lift_height > LIFT_SUCCESS_DELTA
+        lift_shaping = 10.0 * lift_height * grasp_contact_proxy.float()
+        lift_bonus = 4.0 * lifted.float() * grasp_contact_proxy.float()
+
+        return reach + lift_shaping + lift_bonus
 
     elif phase == 2:
         # ── PLACE: Phase 1 reach+grasp + basket bonus ──
@@ -289,3 +392,64 @@ def object_fell(
     """
     obj_z = env.scene["object"].data.root_pos_w[:, 2]
     return obj_z < minimum_height
+
+
+def invalid_arm_state(
+    env: ManagerBasedRLEnv,
+    max_arm_position: float = 12.0,
+    max_arm_velocity: float = 100.0,
+) -> torch.Tensor:
+    """Detect unstable active-arm states before they reach observations."""
+    robot = env.scene["robot"]
+    if not hasattr(env, "_integrity_arm_joint_ids"):
+        arm_joint_names = (
+            "shoulder_pan_joint",
+            "shoulder_lift_joint",
+            "elbow_joint",
+            "wrist_1_joint",
+            "wrist_2_joint",
+            "wrist_3_joint",
+        )
+        env._integrity_arm_joint_ids = [
+            robot.data.joint_names.index(name) for name in arm_joint_names
+        ]
+
+    arm_pos = robot.data.joint_pos[:, env._integrity_arm_joint_ids]
+    arm_vel = robot.data.joint_vel[:, env._integrity_arm_joint_ids]
+    return (
+        (~torch.isfinite(arm_pos)).any(dim=1)
+        | (~torch.isfinite(arm_vel)).any(dim=1)
+        | (arm_pos.abs() > max_arm_position).any(dim=1)
+        | (arm_vel.abs() > max_arm_velocity).any(dim=1)
+    )
+
+
+def invalid_gripper_state(
+    env: ManagerBasedRLEnv,
+    max_finger_position: float = 1.5,
+) -> torch.Tensor:
+    """Detect a non-finite or mechanically impossible drive-joint state."""
+    robot = env.scene["robot"]
+    if not hasattr(env, "_integrity_finger_joint_id"):
+        env._integrity_finger_joint_id = robot.data.joint_names.index("finger_joint")
+    finger_pos = robot.data.joint_pos[:, env._integrity_finger_joint_id]
+    return (~torch.isfinite(finger_pos)) | (finger_pos.abs() > max_finger_position)
+
+
+def invalid_object_state(
+    env: ManagerBasedRLEnv,
+    max_object_xy: float = 2.0,
+    max_object_height: float = 2.0,
+) -> torch.Tensor:
+    """Detect a non-finite object pose or an object launched out of the scene."""
+    obj_pos = object_position(env)
+    return (
+        (~torch.isfinite(obj_pos)).any(dim=1)
+        | (obj_pos[:, :2].abs() > max_object_xy).any(dim=1)
+        | (obj_pos[:, 2] > max_object_height)
+    )
+
+
+def invalid_simulation_state(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Backward-compatible combined integrity predicate used by spike scripts."""
+    return invalid_arm_state(env) | invalid_gripper_state(env) | invalid_object_state(env)

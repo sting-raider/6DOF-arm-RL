@@ -1,107 +1,82 @@
-# Handover & Stabilization Report: UR10e Pick-and-Place via Isaac Lab + PPO
+# Project handover
 
-**Date:** May 27, 2026  
-**Author:** Antigravity (Google DeepMind Advanced Agentic Coding Team)  
-**Recipient:** 6DOF-arm-RL Project & Stakeholders  
-**Project:** `~/ic-6dof-arm/` — UR10e Pick-and-Place via NVIDIA Isaac Lab + RSL-RL (PPO)  
+Last updated: 2026-07-14
 
----
+## Working baseline
 
-## ⚡ TL;DR: Definitive Normalization Saga Resolution
+- Environment: Isaac Lab `ManagerBasedRLEnv`, UR10e + Robotiq 2F-85.
+- Policy observation: 34D normalized state.
+- Policy action: six bounded relative arm commands plus one binary gripper command.
+- Best Phase 0 checkpoint:
+  `models/isaac/phase_0/model_pregrasp_coupled_v2.pt`.
+- Phase 0 strict evaluation: 256/256 reach at 5 cm, 7 mm median minimum
+  distance, 15.4 degree median minimum wrist error, 256/256 grasp-ready poses.
+- Existing Phase 1 warm-start:
+  `models/isaac/phase_1/model_grasp_v1.pt`.
+- Recommended Phase 1 path: `scripts/evaluate_isaac.py --hybrid_phase1`.
+- Hybrid strict lift with corrective regrasp: 41/64 on seed 19595 and
+  37/64 on seed 42 (78/128, 60.9%).
 
-We have diagnosed and **permanently resolved** the value function divergence and policy collapse issues that plagued previous training attempts. By researching online and analyzing physics constraint interactions, we uncovered a critical bug:
-1. **The Bug**: PhysX solver constraint forces during contacts produced massive velocity spikes ($\ge 10,000$ rad/s) in the **unactuated Robotiq mimic joints** (5 out of 6 gripper joints). 
-2. **The Impact**: These spikes skewed the normalizer's running variance calculation into the millions, dividing active joint inputs by millions and zeroing them out (causing policy collapse).
-3. **The Fix**: We **filtered out the mimic joints completely** from the observation space, observing strictly the 6 active arm joints.
-4. **The Result**: The normalizer is now extremely stable! We have re-enabled standard running observation normalization (`obs_normalization: True` without freezing) in both training and evaluation, completely curing the $4.5$ billion value loss explosions and enabling rapid, stable policy learning.
+Phase 0 should not be retrained. Its shuffled-target control degrades sharply,
+which confirms that it actually uses the target coordinates rather than replaying
+a fixed trajectory.
 
----
+## Key diagnosis
 
-## 🏗️ Project Architecture & Configs
+The Robotiq asset is intentionally driven through `finger_joint`; its dependent
+joints move through the asset's mimic/passive linkage. All six linkage joints
+were observed moving, and the gripper can physically lift an object. Driving all
+six joints directly is not the fix.
 
-### 1. State Space (29D Complete Observability)
+The original 4 cm cube has a narrow contact band. An 8 cm descent is too shallow
+for repeatable side contact, while deeper descents collide with the table. A
+4 x 4 x 10 cm starter block removes that ambiguity and proved the grasp pipeline.
 
-| Component | Dim | Scaling / Pre-scaling | Source |
-|-----------|----:|-----------------------|--------|
-| `joint_pos` | 6 | Rel angles (rad) | 6 active arm joints only |
-| `joint_vel` | 6 | Rel velocities (rad/s) | 6 active arm joints only |
-| `ee_pos` | 3 | Scaled EE position | `wrist_3_link` local position / 1.5 |
-| `gripper_state` | 1 | Scaled gripper joint | `finger_joint` position × 25.0 |
-| `object_pos` | 3 | Raw object position | `RigidObject` local position |
-| `relative_pos` | 3 | Raw target vector | EE-to-object local vector |
-| `actions` | 7 | Last actions | Previous control commands |
+Waiting for the gripper to close to 0.70 rad before lifting reduced success from
+34% to 3%. A 0.45 rad transition allows closing to continue during retract. A
+2 cm Cartesian retract request per control tick improved strict success to
+44-47% across two seeds. One bounded retry uses the measured gripper-midpoint
+miss to correct the next XY approach, and a calibrated +7 mm Y target correction
+raises the final two-seed result to 60.9%.
 
-### 2. Action Space (7D)
+The next limiting evidence is simulator contact integrity. On seed 42, the
+current preset produced 19 gripper-integrity and 5 arm-integrity terminations
+(terms can overlap), while still recording 37/64 successful lifts. Higher
+damping increased resets; lower effort reduced resets but also reduced success.
+Keep the current actuator defaults until this is handled as a focused stability
+change rather than hidden inside policy training.
 
-* **Arm Action (6D)**: Joint position deltas scaled by $0.05$ rad per step.
-* **Gripper Action (1D)**: Binary joint position command ($0.0$ for open, $0.04$ for closed).
+## Architecture decision
 
-### 3. Hyperparameters & stable PPO Config
+Do not train a raw-video-to-motor policy. Use:
 
-```python
-ppo_cfg = {
-    "algorithm": {
-        "class_name": "PPO",
-        "num_learning_epochs": 5,
-        "num_mini_batches": 4,
-        "learning_rate": 1e-4,   # Lower learning rate for stable unnormalized/normalized learning
-        "gamma": 0.98,           # Shorter return horizon for stable bootstrapping
-        "lam": 0.95,
-        "clip_param": 0.2,
-        "value_loss_coef": 1.0,
-        "max_grad_norm": 1.0,
-    },
-    "actor": {
-        "obs_normalization": True,  # Standard running normalizer enabled
-        "hidden_dims": [256, 128, 64],
-        "activation": "elu",
-    },
-    "critic": {
-        "obs_normalization": True,  # Standard running normalizer enabled
-        "hidden_dims": [256, 128, 64],
-        "activation": "elu",
-    }
-}
+```text
+camera -> object pose/confidence -> target-position observation
+robot joint state -------------> reach policy -> pose servo -> gripper sequence
 ```
 
----
+Simulation currently supplies the target pose directly. The next integration
+replaces that one source with a camera adapter. Joint feedback comes from the
+robot controller and does not imply buying extra sensing hardware for this stage.
 
-## 🛠️ Run Guide (Copy-Paste Ready)
+## Run notes
 
-Always use the Isaac Sim virtual environment:
-```bash
-cd ~/ic-6dof-arm && source isaacsim-venv-3.11/bin/activate
-```
+- Use `.venv\Scripts\python.exe`; system Python is not the Isaac environment.
+- Each Isaac process needs `OMNI_KIT_ACCEPT_EULA=YES`.
+- On this Windows laptop use:
+  `--kit_args "--/app/vulkan=false --/renderer/multiGpu/enabled=false --/renderer/multiGpu/autoEnable=false"`.
+- Headless runs are most reliable in a PTY.
+- Two protected stale Python processes may remain visible but have not blocked
+  current evaluation runs.
 
-### Phase 0: REACH (Active)
-Trains the arm to reach the red object.
-```bash
-OMNI_KIT_ACCEPT_EULA=YES python scripts/train_isaac.py --phase 0 --num_envs 4096 --headless --max_iterations 1500
-```
+See `README.md` for copy-paste commands and `spikes/002-grasp-geometry/README.md`
+for the geometry evidence.
 
-### Phase 1: GRASP (Warm-Started)
-Warm-starts from the trained REACH model to learn grasping and lifting.
-```bash
-OMNI_KIT_ACCEPT_EULA=YES python scripts/train_isaac.py --phase 1 --num_envs 4096 --headless --max_iterations 1500 \
-  --checkpoint models/isaac/phase_0/model.pt
-```
+## Immediate next work
 
-### Phase 2: PLACE (Warm-Started)
-Warm-starts from the trained GRASP model to learn pick-and-place into the basket.
-```bash
-OMNI_KIT_ACCEPT_EULA=YES python scripts/train_isaac.py --phase 2 --num_envs 4096 --headless --max_iterations 1500 \
-  --checkpoint models/isaac/phase_1/model.pt
-```
-
-### Evaluation
-Evaluates success rates using the fixed coordinate-aligned tracking script:
-```bash
-python scripts/evaluate_isaac.py --phase 0 --model models/isaac/phase_0/model.pt --episodes 20 --num_envs 16
-```
-
----
-
-## 📈 Current Training Progress
- 
-* **Sanity Check (512 envs)**: Completed successfully in 150 iterations. `Mean value loss` stabilized at **`0.0130`** and `Episode_Reward/reach` climbed consistently to **`0.3243`**.
-* **Full retraining (4096 envs)**: **Currently running** (`task-1794`). After solving the Robotiq joint mapping structure to include only the 6 active physical degrees of freedom, the policy is training at **48,000+ steps/second** with extremely stable value loss (**`0.0058`**) and climbing reach reward (**`0.1088`**).
+1. Add a replaceable camera/target-provider interface and perturbation tests.
+2. Add confidence and stale-target handling before any real camera connection.
+3. Improve grasp success from 61% toward the 80% starter-object gate.
+4. Test object dimensions from easy block toward the 4 cm cube.
+5. Reserve cloud GPU time for a short residual correction policy only if needed.
+6. Begin Phase 2 after grasp success is consistently high.

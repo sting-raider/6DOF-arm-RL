@@ -5,6 +5,11 @@ __pycache__/
 *.so
 .venv/
 venv/
+.tools/
+.uv-cache/
+.pip-cache/
+.omni-config/
+.omniverse/
 
 # MuJoCo (archived locally, not in project)
 archived_mujoco/
